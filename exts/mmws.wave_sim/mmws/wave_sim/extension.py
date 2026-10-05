@@ -42,6 +42,15 @@ except ImportError:          # pragma: no cover - running outside Kit
 
 from .registry import FIELDS, FORCES, SPECTRA
 
+# Level for the one-time lifecycle messages (startup, shutdown, component swaps).
+#
+# "warn" on purpose. carb's default console level hides info, and so does the
+# Console window's own filter, so an extension that announces itself at info
+# level looks identical to one that failed to load. During bring-up, being able
+# to see that it started is worth more than log-level purity. Drop this to
+# "info" once the extension has a UI that makes its state visible.
+BANNER_LEVEL = "warn"
+
 
 class MultiModalWaveSimExtension(_ExtBase):
     """Lifecycle owner. Holds the current selection and the event handles."""
@@ -62,10 +71,10 @@ class MultiModalWaveSimExtension(_ExtBase):
         self.field = None
         self.force_model = None
 
-        self._log(f"starting up (ext_id={ext_id})")
-        self._log(f"  spectra:      {', '.join(SPECTRA.names()) or '(none)'}")
-        self._log(f"  wave fields:  {', '.join(FIELDS.names()) or '(none)'}")
-        self._log(f"  force models: {', '.join(FORCES.names()) or '(none)'}")
+        self._log(f"starting up (ext_id={ext_id})", BANNER_LEVEL)
+        self._log(f"  spectra:      {', '.join(SPECTRA.names()) or '(none)'}", BANNER_LEVEL)
+        self._log(f"  wave fields:  {', '.join(FIELDS.names()) or '(none)'}", BANNER_LEVEL)
+        self._log(f"  force models: {', '.join(FORCES.names()) or '(none)'}", BANNER_LEVEL)
 
         # Safe defaults: a spectrum that works, a field that is flat and a
         # force model that does nothing. Nothing here touches the stage, so
@@ -73,10 +82,10 @@ class MultiModalWaveSimExtension(_ExtBase):
         try:
             self.select(spectrum="pierson_moskowitz", field="flat", force_model="zero")
         except Exception as exc:                      # noqa: BLE001
-            self._log(f"  could not build defaults: {exc}", error=True)
+            self._log(f"  could not build defaults: {exc}", "error")
 
         self._subscribe()
-        self._log("ready")
+        self._log("ready", BANNER_LEVEL)
 
     def on_shutdown(self) -> None:
         # Unsubscribe before dropping anything else: a callback firing into a
@@ -86,7 +95,7 @@ class MultiModalWaveSimExtension(_ExtBase):
         self.spectrum = None
         self.field = None
         self.force_model = None
-        self._log("shut down")
+        self._log("shut down", BANNER_LEVEL)
 
     # ------------------------------------------------------------------ the swap
 
@@ -99,13 +108,13 @@ class MultiModalWaveSimExtension(_ExtBase):
         """
         if spectrum is not None:
             self.spectrum = SPECTRA.create(spectrum)
-            self._log(f"spectrum  -> {self.spectrum!r}")
+            self._log(f"spectrum  -> {self.spectrum!r}", BANNER_LEVEL)
         if field is not None:
             self.field = FIELDS.create(field, spectrum=self.spectrum)
-            self._log(f"field     -> {self.field!r}")
+            self._log(f"field     -> {self.field!r}", BANNER_LEVEL)
         if force_model is not None:
             self.force_model = FORCES.create(force_model)
-            self._log(f"forces    -> {self.force_model!r}")
+            self._log(f"forces    -> {self.force_model!r}", BANNER_LEVEL)
 
     # ------------------------------------------------------------ subscriptions
 
@@ -119,7 +128,7 @@ class MultiModalWaveSimExtension(_ExtBase):
                 .create_subscription_to_pop(self._on_timeline_event)
             )
         except Exception as exc:                      # noqa: BLE001
-            self._log(f"no timeline events ({exc})", error=True)
+            self._log(f"no timeline events ({exc})", "error")
 
         try:
             from omni.physx import get_physx_interface
@@ -128,7 +137,7 @@ class MultiModalWaveSimExtension(_ExtBase):
                 self._on_physics_step
             )
         except Exception as exc:                      # noqa: BLE001
-            self._log(f"no physics step events ({exc})", error=True)
+            self._log(f"no physics step events ({exc})", "error")
 
     def _unsubscribe(self) -> None:
         if self._physics_sub is not None:
@@ -150,7 +159,7 @@ class MultiModalWaveSimExtension(_ExtBase):
             if event.type == int(omni.timeline.TimelineEventType.STOP):
                 self._step_count = 0
                 self._sim_time = 0.0
-                self._log("timeline stopped, counters reset")
+                self._log("timeline stopped, counters reset", BANNER_LEVEL)
         except Exception:                             # noqa: BLE001
             pass
 
@@ -180,12 +189,13 @@ class MultiModalWaveSimExtension(_ExtBase):
         # a 60 Hz step. Delete once there is real work here.
         if self._step_count % 60 == 0:
             self._log(
-                f"step {self._step_count}  t={self._sim_time:.2f}s  dt={dt * 1000:.2f}ms"
+                f"step {self._step_count}  t={self._sim_time:.2f}s  dt={dt * 1000:.2f}ms",
+                "warn" if self._step_count <= 300 else "info",
             )
 
     # -------------------------------------------------------------------- utils
 
-    def _log(self, message: str, error: bool = False) -> None:
+    def _log(self, message: str, level: str = "info") -> None:
         """carb's logger when inside Kit, print() when not.
 
         Lets the same code be exercised from a plain python shell, which is how
@@ -195,6 +205,8 @@ class MultiModalWaveSimExtension(_ExtBase):
         try:
             import carb
 
-            (carb.log_error if error else carb.log_info)(text)
+            {"info": carb.log_info, "warn": carb.log_warn, "error": carb.log_error}[
+                level
+            ](text)
         except Exception:                             # noqa: BLE001
             print(text)
