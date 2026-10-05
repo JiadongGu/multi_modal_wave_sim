@@ -4,7 +4,9 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
-.vscode/
+# Share the project settings (they fix import resolution), ignore the rest.
+.vscode/*
+!.vscode/settings.json
 .idea/
 *.usda.bak
 # Isaac Sim writes caches next to extensions it loads
