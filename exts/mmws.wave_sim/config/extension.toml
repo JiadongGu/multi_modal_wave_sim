@@ -1,0 +1,28 @@
+# Kit extension manifest.  Isaac Sim's extension manager scans search paths for
+# directories containing config/extension.toml; this file is the entire reason
+# the simulator knows this plugin exists.
+
+[package]
+version = "0.1.0"
+title = "Multi-Modal Wave Sim"
+description = "Swappable wave spectra, wave fields and hydrodynamic force models for Isaac Sim."
+authors = ["Jiadong Gu"]
+category = "Simulation"
+keywords = ["ocean", "waves", "asv", "usv", "marine", "hydrodynamics", "buoyancy"]
+repository = "https://github.com/JiadongGu/multi_modal_wave_sim"
+# Shown in the Extensions window; harmless if the file is absent.
+# icon = "data/icon.png"
+
+# Kept deliberately small.  Every dependency listed here is another way for the
+# extension to fail to load, and nothing below is needed to prove the plugin is
+# recognised.  Add isaacsim.core.api / isaacsim.ros2.bridge when the modules
+# that need them actually exist.
+[dependencies]
+"omni.kit.uiapp" = {}
+"omni.usd" = {}
+
+# The python package Kit imports on startup.  The path is relative to this
+# extension's root directory, which Kit puts on sys.path for us.  Kit then
+# scans the module for subclasses of omni.ext.IExt and instantiates them.
+[[python.module]]
+name = "mmws.wave_sim"
