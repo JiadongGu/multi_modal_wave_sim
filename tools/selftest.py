@@ -195,6 +195,60 @@ def test_field_advance_is_reproducible():
     assert np.array_equal(a, np.array(f.height(x, 0.0))), "advance(t) is not reproducible"
 
 
+def _fft(seed=0, L=512.0, N=256, **kw):
+    spec = SPECTRA.create("jonswap", hs=2.0, tp=7.0, spread_s=5.0, gamma=3.3)
+    return FIELDS.create("fft", spectrum=spec, tile_size=L, resolution=N, seed=seed, **kw)
+
+
+def test_fft_needs_a_spectrum():
+    try:
+        FIELDS.create("fft", spectrum=None)
+    except (ValueError, TypeError):
+        return
+    raise AssertionError("a wave field with no spectrum should not construct")
+
+
+def test_fft_surface_is_real():
+    """The two-term construction is Hermitian, so the ifft must come out real."""
+    f = _fft()
+    z = np.asarray(f.height(np.linspace(0, 100, 32), 0.0))
+    assert np.all(np.isreal(z)), "height() returned complex values"
+    assert np.all(np.isfinite(z)), "height() returned non-finite values"
+
+
+def test_fft_hs_roundtrip():
+    """Averaged over seeds, the field must measure the Hs the spectrum promised."""
+    hs = [_fft(seed=k).significant_height() for k in range(8)]
+    mean = float(np.mean(hs))
+    assert_close(mean, 2.0, 0.16, f"mean Hs over 8 seeds (got {hs!r})")
+
+
+def test_fft_advance_is_reproducible():
+    f = _fft(N=128)
+    x = np.linspace(0, 200, 17)
+    f.advance(3.0)
+    a = np.array(f.height(x, 0.0))
+    f.advance(99.0)
+    f.advance(3.0)
+    assert np.array_equal(a, np.array(f.height(x, 0.0))), "advance(t) is not reproducible"
+
+
+def test_fft_waves_actually_move():
+    f = _fft(N=128)
+    x = np.linspace(0, 200, 17)
+    f.advance(0.0)
+    a = np.array(f.height(x, 0.0))
+    f.advance(2.0)
+    moved = float(np.max(np.abs(np.array(f.height(x, 0.0)) - a)))
+    assert moved > 0.05, f"surface barely changed in 2 s (max delta {moved:.4f} m)"
+
+
+def test_fft_stays_bounded():
+    f = _fft(N=128)
+    f.advance(600.0)
+    assert_close(f.significant_height(), 2.0, 0.8, "Hs after 10 minutes")
+
+
 def test_cell_size():
     f = FIELDS.create("flat", tile_size=128.0, resolution=256)
     assert_close(f.cell_size, 0.5, 1e-12, "cell size")
@@ -234,6 +288,12 @@ TESTS = [
     ("cell size", test_cell_size, False),
     ("zero force model returns 6 zeros", test_zero_force_is_zero, False),
     ("wrench addition", test_wrench_addition, False),
+    ("FFT: rejects a missing spectrum", test_fft_needs_a_spectrum, True),
+    ("FFT: surface is real and finite", test_fft_surface_is_real, True),
+    ("FFT: Hs round-trip over 8 seeds", test_fft_hs_roundtrip, True),
+    ("FFT: advance(t) is reproducible", test_fft_advance_is_reproducible, True),
+    ("FFT: waves actually move", test_fft_waves_actually_move, True),
+    ("FFT: still bounded after 10 min", test_fft_stays_bounded, True),
     # --- stubs you are going to implement -------------------------------------
     ("JONSWAP: Hs round-trip", test_jonswap_hs_roundtrip, True),
     ("JONSWAP: gamma=1 equals PM", test_jonswap_reduces_to_pm, True),

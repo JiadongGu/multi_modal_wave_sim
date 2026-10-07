@@ -21,6 +21,7 @@ from .spectra import pierson_moskowitz as _pm       # noqa: F401
 from .spectra import jonswap as _jonswap            # noqa: F401
 from .spectra import eckv as _eckv                  # noqa: F401
 from .field import flat as _flat                    # noqa: F401
+from .field import fft as _fft                      # noqa: F401
 from .forces import zero as _zero                   # noqa: F401
 
 # Kit discovers the extension by scanning this module for omni.ext.IExt
