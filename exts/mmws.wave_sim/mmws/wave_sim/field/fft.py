@@ -1,95 +1,95 @@
-"""FFT wave field - YOUR IMPLEMENTATION.
-
-A real sea surface, synthesised by giving every wave component a random
-amplitude drawn from the spectrum and summing them with an inverse FFT. This
-is the Tessendorf method, and it is what `asv_wave_sim` uses.
-
-tools/demo_wave_generation.py already does this by direct summation. Same
-physics; this computes it in one transform instead of N^4 cosines.
-
-The construction
-----------------
-Every cell of an N x N grid in wavenumber space is one wave component:
-
-    k_axis = 2*pi * fftfreq(N, d=L/N)        spacing dk = 2*pi/L
-    k      = (kx, ky),  |k| -> wavelength,  atan2(ky,kx) -> direction
-
-Each gets a variance from the spectrum, exactly as in the demo:
-
-    var(k) = S(w) * (dw/dk) * D(theta) / |k| * dk * dk
-
-and a complex Gaussian amplitude with that variance:
-
-    h0(k) = (xi_r + i xi_i)/sqrt(2) * sqrt(var(k) / 2)
-
-Time evolution uses the two-term form:
-
-    h(k,t) = h0(k) e^{i w t} + conj(h0(-k)) e^{-i w t}
-
-Two reasons for the two terms rather than one. It makes waves *travel*
-rather than stand. And it is automatically Hermitian - h(-k) = conj(h(k))
-holds by construction - so the inverse FFT returns a real surface with no
-symmetry fixing up afterwards. Assert the imaginary residual is ~1e-20 and
-you know you got it right.
-
-Finally:
-
-    eta = real(ifft2(h)) * N^2
-
-The N^2 undoes numpy's 1/N^2 normalisation in ifft2, so that
-eta(x) = sum_k h(k) exp(i k.x) as written above.
-
-What to write
--------------
-1. `_build()`   - the k grid, omega, and h0. Runs once.
-2. `advance(t)` - the two-term evolution and the inverse FFT. Runs every step.
-3. `height(x,y)`- bilinear interpolation into the grid, with wrapping, since
-                  the field tiles every `tile_size`.
-
-Leave horizontal displacement (choppy waves) alone for now. It makes
-`height()` much harder - the point of the mesh above (x,y) is no longer the
-point generated from (x,y), so you need a triangle search and a vertical ray
-rather than a lookup. Get the flat-grid version correct and tested first.
-
-Expect Hs to scatter between realisations: about +/-4% at L=512 N=256,
-shrinking as the tile grows. That is physical, not a bug - average over seeds
-before concluding anything is wrong.
-"""
-
 from __future__ import annotations
 
 import math
 
 import numpy as np
 
-from ..registry import FIELDS
+from ..registry import FIELDS #NOT SPECTRA!
+from ..globals import GRAVITY #chain-rule factor
 from .base import WaveField, deep_water_omega
 
 
 @FIELDS.register("fft")
-class FftWaveField(WaveField):
-    """A tiling sea surface synthesised from a spectrum with an inverse FFT."""
 
-    def __init__(self, spectrum=None, tile_size: float = 256.0,
+#son of WaveField
+class FftWaveField(WaveField):
+    """tiling sea surface synthesized from a spectrum with inverse FFT"""
+
+    def __init__(self,spectrum=None, tile_size:float = 256.0,
                  resolution: int = 128, seed: int = 0, **kwargs) -> None:
-        super().__init__(spectrum=spectrum, tile_size=tile_size, resolution=resolution)
+        #resolution is grid points per side* NxN height samples
+        super().__init__(spectrum=spectrum,tile_size=tile_size,resolution=resolution)
+        #WaveField init contains validation for tile_size and resolution.
         if spectrum is None:
             raise ValueError("FftWaveField needs a spectrum to draw amplitudes from")
+
         self.seed = int(seed)
-        self._build()
-        self.advance(0.0)
+
+        self._build() #expensive setup
+        self.advance(0.0) #this is to make sure that the object is IMMEDIATELY usable.
 
     def _build(self) -> None:
-        """Build the k grid, the dispersion table and the base amplitudes h0."""
-        # TODO(jiadong): see the module docstring.
-        raise NotImplementedError("FftWaveField._build is not implemented yet")
+        """build k grid, dispersion table, and base amplitudes"""
+        N,L = self.resolution, self.tile_size #keeps formulas readable
 
-    def advance(self, t: float) -> None:
-        """Evolve to absolute time t and inverse-FFT into a height grid."""
-        # TODO(jiadong): see the module docstring.
-        raise NotImplementedError("FftWaveField.advance is not implemented yet")
+        k_axis = 2.0 * math.pi * np.fft.fftfreq(N, d = L/N)
+        """fftfreq returns frequency for each FFT bin. d is grid spacing in meters
+        so basically we get cycles/meter"""
 
-    def height(self, x, y):
+        self._kx, self._ky = np.meshgrid(k_axis,k_axis,indexing="ij") #[i,j] can access the wave vector of a cell
+        k = np.hypot(self._kx, self._ky)
+
+        self._omega = np.asarray(deep_water_omega(k))
+        # = sqrt(g*k) for every cell. THIS IS DISPERSION!
+
+        k_safe = np.maximum(k, 1e-12) #clamp
+
+        dk = 2.0 * math.pi/L #grid spacing in wavenumber space
+
+        S = np.asarray(self.spectrum.energy(self._omega))
+        #spectrum evaluated at every cell's omega
+
+        dwdk = 0.5*np.sqrt(GRAVITY/k_safe) #chain rule
+
+        D = np.asarray(self.spectrum.spreading(np.arctan2(self._ky,self._kx)))
+        #arctan is direction theta of each cell's wave vector in radians
+        #D is the cos-2s spreading weight (how much of that frequency's energy travels this direction)
+
+        var = np.where(k > 0.0, S * dwdk *D / k_safe *dk * dk, 0.0)
+
+        rng = np.random.default_rng(self.seed)
+
+        xi = rng.normal(size=(N,N)) + 1j * rng.normal(size=(N,N))
+        #this is a complex Gaussian per cell, thats why we need the randomness.
+
+        self._h0 = (xi / math.sqrt(2.0)) * np.sqrt(var / 2.0)
+
+    def advance(self, t:float) -> None:
+        """Evolve to absolute time t and inverse-FFT into a height grid"""
+        self.time = float(t)
+        phase = np.exp(1j * self._omega * t)
+        h = self._h0 * phase + np.conj(self._negated(self._h0)) * np.conj(phase)
+        #h is the amplitude of every component at time t
+        eta = np.fft.ifft2(h) * self.resolution**2
+        self._imag_residual = float(np.max(np.abs(eta.imag)))
+        self._z = eta.real
+
+    @staticmethod
+    def _negated(a):
+        """a evaluated at -k: index (N-i) mod N, (N-j) mod N."""
+        return np.roll(np.flip(a, axis=(0, 1)), shift=(1, 1), axis=(0, 1))
+
+    def height(self,x,y):
         """Bilinear sample of the height grid, wrapping at the tile edges."""
-        # TODO(jiadong): see the module docstring.
-        raise NotImplementedError("FftWaveField.height is not implemented yet")
+        N,L = self.resolution, self.tile_size
+        fx = (np.asarray(x, dtype=float) % L) / L * N
+        fy = (np.asarray(y, dtype=float) % L) / L * N
+        i0 = fx.astype(np.int64) % N   #the cell the point lands in
+        j0 = fy.astype(np.int64) % N
+        i1, j1 = (i0 + 1) % N, (j0 + 1) % N
+        tx, ty = fx - np.floor(fx), fy - np.floor(fy)
+        z = self._z
+        return (z[i0, j0] * (1.0 - tx) * (1.0 - ty)
+            + z[i1, j0] * tx * (1.0 - ty)
+            + z[i0, j1] * (1.0 - tx) * ty
+            + z[i1, j1] * tx * ty)
