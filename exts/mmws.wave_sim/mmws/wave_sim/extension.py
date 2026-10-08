@@ -1,29 +1,4 @@
-"""The Kit entry point - the only code Isaac Sim calls directly.
 
-Isaac Sim has no main() for us to write. It is the program; this is a plugin
-loaded into its process. The extension manager finds `config/extension.toml`,
-imports the python module named there, scans it for subclasses of
-`omni.ext.IExt`, and instantiates them. From then on the lab's code runs only
-as callbacks.
-
-There are exactly three doors in:
-
-    on_startup / on_shutdown    extension enabled / disabled
-    timeline events             user pressed Play / Pause / Stop
-    physics step events         every PhysX substep - the hot path
-
-Everything the simulator does happens behind one of those three. There is no
-scheduler or tick loop to write, and anything that tries to own its own loop is
-fighting the host.
-
-Design notes
-------------
-`omni.ext` is always available inside Kit, so it is imported at module scope.
-Everything else is imported lazily inside a try/except, because a plugin that
-raises during import does not appear in the Extensions window at all - it just
-silently fails to load, which is a miserable thing to debug on a fresh machine.
-Degrading to "loaded but inert" is far easier to diagnose than vanishing.
-"""
 
 from __future__ import annotations
 
@@ -59,6 +34,7 @@ class MultiModalWaveSimExtension(_ExtBase):
         self._ext_id = ext_id
         self._step_count = 0
         self._sim_time = 0.0
+        self._last_draw = 0.0
 
         # Handles for the event subscriptions. Kept as attributes because
         # dropping the reference silently unsubscribes - a classic Kit bug.
@@ -159,6 +135,7 @@ class MultiModalWaveSimExtension(_ExtBase):
             if event.type == int(omni.timeline.TimelineEventType.STOP):
                 self._step_count = 0
                 self._sim_time = 0.0
+                self._last_draw = 0.0
                 self._log("timeline stopped, counters reset", BANNER_LEVEL)
         except Exception:                             # noqa: BLE001
             pass
@@ -184,6 +161,10 @@ class MultiModalWaveSimExtension(_ExtBase):
 
         if self.field is not None:
             self.field.advance(self._sim_time)
+            if(self._sim_time - self._last_draw >= 1.0 / 20.0): #throttle limits how often the mesh is redrawn. 20Hz
+                self._last_draw = self._sim_time
+                import omni.usd
+                self.field.write_mesh(omni.usd.get_context().get_stage())
 
         # Proof of life without flooding the console: roughly once a second at
         # a 60 Hz step. Delete once there is real work here.

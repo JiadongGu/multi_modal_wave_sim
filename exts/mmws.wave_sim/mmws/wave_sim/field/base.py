@@ -1,41 +1,3 @@
-"""The wave field contract - the most important file in the project.
-
-One field, two consumers
-------------------------
-A wave field has exactly two customers: the renderer, which needs the whole
-surface as geometry, and the physics, which needs the height at a handful of
-scattered points. ASTRA served them with two separate implementations of the
-same formula - a Warp GPU kernel wrote the visual mesh, and a NumPy function
-recomputed the identical expression for buoyancy. Nothing ever read the GPU
-buffer back.
-
-That duplication had two consequences worth remembering:
-
-* the two copies could disagree, and nothing would detect it;
-* their JONSWAP module could not be switched on at all, because it existed
-  only as a GPU kernel with no CPU twin to answer height queries. A finished,
-  working, cited wave model sat disabled for want of one function.
-
-So in this project the field is the *single owner* of the surface state:
-
-    advance(t)          move the field to time t. Called once per update.
-    height(x, y)        elevation query. Physics calls this.
-    displacement(x, y)  horizontal motion of the surface (choppy waves).
-    normal(x, y)        surface normal, for slope-dependent forces.
-    write_mesh(...)     push the current state to the renderer.
-
-Both consumers read the same state, by construction. A subclass physically
-cannot let them drift.
-
-Dispersion
-----------
-`deep_water_wavenumber` and `deep_water_omega` are here because dispersion is
-a property of the field, not of the spectrum. ASTRA had none at all: time
-entered its wave model as a bare `+ t`, so every component advanced at 1 rad/s
-regardless of wavelength, and a 2 m ripple travelled as fast as a 100 m swell.
-Getting this right is what makes a wave field look like water rather than like
-a vibrating sheet.
-"""
 
 from __future__ import annotations
 
@@ -167,52 +129,39 @@ class WaveField(ABC):
         gx, gy = np.meshgrid(g, g, indexing="ij")
         return float(4.0 * np.std(np.asarray(self.height(gx, gy))))
 
-    # ------------------------------------------------------------------ visuals
+    #visuals start here
 
     def mesh_points(self):
-        """Vertex positions for the render mesh, shape (N*N, 3), row-major.
-
-        Point (i, j) sits at x = i*cell, y = j*cell, z = height(x, y), so index
-        i*N + j matches the height grid's own indexing. Pure numpy - no USD, no
-        Isaac Sim - so the geometry can be checked without launching anything.
-
-        The mesh spans L - cell rather than the full tile, because N points at
-        spacing cell cover N-1 intervals. Harmless for a single patch; revisit
-        when tiling several side by side.
-        """
-        # TODO(jiadong): see the docstring. Pure numpy, no USD.
-        raise NotImplementedError("WaveField.mesh_points is not implemented yet")
+        N = self.resolution
+        axis = np.arange(N,dtype=float) * self.cell_size #1-D coordinate axis
+        X,Y = np.meshgrid(axis,axis,indexing="ij") #NxN coordinate grid
+        Z = np.asarray(self.height(X,Y),dtype=float) #Ask field for elevation at every grid point
+        return np.stack([X.ravel(),Y.ravel(),Z.ravel()],axis=-1) #turns into n^2, 3 array of xyz triples
 
     def mesh_topology(self):
-        """Face counts and vertex indices for the render mesh.
-
-        (N-1)^2 quads, wound counter-clockwise seen from +z so the normals face
-        up. Returns (counts, indices) as int32 arrays.
-
-        This never changes once built - only the points move. Rebuilding it
-        every frame is the classic way to make a deforming mesh slow.
-        """
-        # TODO(jiadong): see the docstring. Pure numpy, no USD.
-        raise NotImplementedError("WaveField.mesh_topology is not implemented yet")
+        N = self.resolution
+        i,j = np.meshgrid(np.arange(N-1),np.arange(N-1),indexing="ij")
+        v00 = (i * N + j).ravel() #vertex index of each quad's bottom left corner
+        quads = np.stack([v00,v00+N,v00+N+1,v00+1],axis=-1) #four corners in order
+        counts = np.full((N-1) ** 2, 4, dtype = np.int32) #vertice counts
+        return counts, quads.ravel().astype(np.int32)
 
     def write_mesh(self, stage=None, prim_path: str = "/World/Water"):
-        """Push the current surface to a UsdGeom.Mesh, creating it if needed.
+        if stage is None:
+            return None
+        from pxr import UsdGeom, Vt #IGNORE THIS FLAG, PXR IS INSTALLED IN ISAACSIM
 
-        The seam between this project and Isaac Sim. Everything above is pure
-        numpy; this is the only part that needs USD, which is why it is thin and
-        why `mesh_points` and `mesh_topology` are separate - they can be tested
-        on a laptop, this cannot.
-
-        Deliberately separate from `advance` so the visual rate and the physics
-        rate can differ. ASTRA redraws at 20 Hz while physics steps at 60.
-
-        Plain USD on purpose. USDRT / Fabric with a Warp kernel is the fast path
-        and writes the points without a round trip through Python, but get this
-        working first - debugging an unfamiliar fast path and unfamiliar wave
-        maths at the same time is how afternoons disappear.
-        """
-        # TODO(jiadong): see the docstring. Needs Isaac Sim to test.
-        raise NotImplementedError("WaveField.write_mesh is not implemented yet")
+        mesh = UsdGeom.Mesh.Get(stage,prim_path) #fetch mesh if it exists
+        if not mesh:
+            mesh = UsdGeom.Mesh.Define(stage,prim_path)
+            counts, indices = self.mesh_topology() #creates prim, topology attributes get set
+            mesh.CreateFaceVertexCountsAttr(Vt.IntArray.FromNumpy(counts))
+            mesh.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(indices))
+            mesh.CreatePointsAttr()
+        pts=self.mesh_points().astype(np.float32) #USD points are Vec3f, so convert from float64 down to float32
+        mesh.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(pts))
+        return mesh
+        
 
     def __repr__(self) -> str:
         return (
