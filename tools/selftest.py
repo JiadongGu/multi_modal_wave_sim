@@ -249,6 +249,56 @@ def test_fft_stays_bounded():
     assert_close(f.significant_height(), 2.0, 0.8, "Hs after 10 minutes")
 
 
+def test_mesh_points_shape_and_spacing():
+    f = _fft(N=32)
+    pts = f.mesh_points()
+    N = f.resolution
+    assert pts.shape == (N * N, 3), f"expected {(N*N, 3)}, got {pts.shape}"
+    assert_close(float(pts[N, 0] - pts[0, 0]), f.cell_size, 1e-9, "x spacing between rows")
+    assert_close(float(pts[1, 1] - pts[0, 1]), f.cell_size, 1e-9, "y spacing within a row")
+
+
+def test_mesh_points_match_height():
+    """The mesh and the physics must read the same surface - that is the design."""
+    f = _fft(N=32)
+    pts = f.mesh_points()
+    z = np.asarray(f.height(pts[:, 0], pts[:, 1]))
+    assert np.allclose(pts[:, 2], z), "mesh z does not match height() at the same xy"
+
+
+def test_mesh_topology_valid():
+    f = _fft(N=32)
+    counts, idx = f.mesh_topology()
+    N = f.resolution
+    assert counts.shape == ((N - 1) ** 2,), f"expected {(N-1)**2} faces, got {counts.shape}"
+    assert bool((counts == 4).all()), "every face must be a quad"
+    assert idx.shape == (4 * (N - 1) ** 2,), f"wrong index count: {idx.shape}"
+    assert int(idx.min()) >= 0 and int(idx.max()) < N * N, "vertex index out of range"
+
+
+def test_mesh_topology_is_static():
+    """Topology never changes - rebuilding it every frame is the classic perf bug."""
+    f = _fft(N=32)
+    a = f.mesh_topology()[1]
+    f.advance(12.0)
+    assert np.array_equal(a, f.mesh_topology()[1]), "topology changed after advance()"
+
+
+def test_mesh_winding_faces_up():
+    f = _fft(N=32)
+    pts, (_, idx) = f.mesh_points(), f.mesh_topology()
+    a, b, d = pts[idx[0]], pts[idx[1]], pts[idx[3]]
+    n = np.cross(b - a, d - a)
+    assert n[2] > 0, f"first quad normal points down: {n}"
+
+
+def test_mesh_works_for_flat_field():
+    f = FIELDS.create("flat", tile_size=256.0, resolution=8)
+    pts = f.mesh_points()
+    assert pts.shape == (64, 3)
+    assert bool((pts[:, 2] == 0.0).all()), "flat water mesh is not flat"
+
+
 def test_cell_size():
     f = FIELDS.create("flat", tile_size=128.0, resolution=256)
     assert_close(f.cell_size, 0.5, 1e-12, "cell size")
@@ -294,6 +344,12 @@ TESTS = [
     ("FFT: advance(t) is reproducible", test_fft_advance_is_reproducible, True),
     ("FFT: waves actually move", test_fft_waves_actually_move, True),
     ("FFT: still bounded after 10 min", test_fft_stays_bounded, True),
+    ("mesh: point shape and spacing", test_mesh_points_shape_and_spacing, True),
+    ("mesh: z matches height()", test_mesh_points_match_height, True),
+    ("mesh: topology is valid", test_mesh_topology_valid, True),
+    ("mesh: topology is static", test_mesh_topology_is_static, True),
+    ("mesh: winding faces up", test_mesh_winding_faces_up, True),
+    ("mesh: works for the flat field", test_mesh_works_for_flat_field, True),
     # --- stubs you are going to implement -------------------------------------
     ("JONSWAP: Hs round-trip", test_jonswap_hs_roundtrip, True),
     ("JONSWAP: gamma=1 equals PM", test_jonswap_reduces_to_pm, True),

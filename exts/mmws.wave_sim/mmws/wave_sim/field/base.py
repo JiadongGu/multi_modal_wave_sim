@@ -169,21 +169,50 @@ class WaveField(ABC):
 
     # ------------------------------------------------------------------ visuals
 
-    def write_mesh(self, stage=None, prim_path: str = "/World/Water") -> None:
-        """Push the current surface to the renderer. No-op by default.
+    def mesh_points(self):
+        """Vertex positions for the render mesh, shape (N*N, 3), row-major.
 
-        The seam for all the visual work. The fast path in Isaac Sim is USDRT
-        / Fabric: get the mesh's points attribute once, then write into it from
-        a Warp kernel so the data never round-trips through Python. Going
-        through the plain USD API instead works and is much easier to debug,
-        and is the right first version.
+        Point (i, j) sits at x = i*cell, y = j*cell, z = height(x, y), so index
+        i*N + j matches the height grid's own indexing. Pure numpy - no USD, no
+        Isaac Sim - so the geometry can be checked without launching anything.
+
+        The mesh spans L - cell rather than the full tile, because N points at
+        spacing cell cover N-1 intervals. Harmless for a single patch; revisit
+        when tiling several side by side.
+        """
+        # TODO(jiadong): see the docstring. Pure numpy, no USD.
+        raise NotImplementedError("WaveField.mesh_points is not implemented yet")
+
+    def mesh_topology(self):
+        """Face counts and vertex indices for the render mesh.
+
+        (N-1)^2 quads, wound counter-clockwise seen from +z so the normals face
+        up. Returns (counts, indices) as int32 arrays.
+
+        This never changes once built - only the points move. Rebuilding it
+        every frame is the classic way to make a deforming mesh slow.
+        """
+        # TODO(jiadong): see the docstring. Pure numpy, no USD.
+        raise NotImplementedError("WaveField.mesh_topology is not implemented yet")
+
+    def write_mesh(self, stage=None, prim_path: str = "/World/Water"):
+        """Push the current surface to a UsdGeom.Mesh, creating it if needed.
+
+        The seam between this project and Isaac Sim. Everything above is pure
+        numpy; this is the only part that needs USD, which is why it is thin and
+        why `mesh_points` and `mesh_topology` are separate - they can be tested
+        on a laptop, this cannot.
 
         Deliberately separate from `advance` so the visual rate and the physics
-        rate can differ - ASTRA updated its mesh at 20 Hz while physics stepped
-        far faster. Keep that split, but note that it means the renderer shows
-        a frozen surface between updates, so interpolate if it shows.
+        rate can differ. ASTRA redraws at 20 Hz while physics steps at 60.
+
+        Plain USD on purpose. USDRT / Fabric with a Warp kernel is the fast path
+        and writes the points without a round trip through Python, but get this
+        working first - debugging an unfamiliar fast path and unfamiliar wave
+        maths at the same time is how afternoons disappear.
         """
-        return None
+        # TODO(jiadong): see the docstring. Needs Isaac Sim to test.
+        raise NotImplementedError("WaveField.write_mesh is not implemented yet")
 
     def __repr__(self) -> str:
         return (
