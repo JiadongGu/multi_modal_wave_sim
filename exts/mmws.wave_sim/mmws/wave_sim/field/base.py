@@ -77,7 +77,7 @@ class WaveField(ABC):
     @abstractmethod
     def height(self, x, y):
         """Surface elevation at world (x, y) [m]. Scalar or array in, same out.
-
+        
         This is the one function the whole force path depends on. It must be
         cheap enough to call for every hull sample point, every physics step.
         """
@@ -161,7 +161,8 @@ class WaveField(ABC):
         pts=self.mesh_points().astype(np.float32) #USD points are Vec3f, so convert from float64 down to float32
         mesh.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(pts))
         return mesh
-        
+
+    
 
     def __repr__(self) -> str:
         return (

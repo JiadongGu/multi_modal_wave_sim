@@ -56,7 +56,13 @@ class MultiModalWaveSimExtension(_ExtBase):
         # force model that does nothing. Nothing here touches the stage, so
         # enabling the extension cannot disturb a scene.
         try:
-            self.select(spectrum="pierson_moskowitz", field="flat", force_model="zero")
+            self.select(
+                spectrum="jonswap",
+                spectrum_kwargs={"hs": 2.0, "tp": 7.0, "spread_s": 5.0},
+                field="fft",
+                field_kwargs={"tile_size": 256.0, "resolution": 64},
+                force_model="zero",
+            )
         except Exception as exc:                      # noqa: BLE001
             self._log(f"  could not build defaults: {exc}", "error")
 
@@ -75,7 +81,14 @@ class MultiModalWaveSimExtension(_ExtBase):
 
     # ------------------------------------------------------------------ the swap
 
-    def select(self, spectrum=None, field=None, force_model=None) -> None:
+    def select(
+        self,
+        spectrum=None,
+        spectrum_kwargs=None,
+        field=None,
+        field_kwargs=None,
+        force_model=None,
+    ) -> None:
         """Swap any of the three components by registry name.
 
         Each is independent, so `select(spectrum="jonswap")` leaves the field
@@ -83,10 +96,12 @@ class MultiModalWaveSimExtension(_ExtBase):
         service or a test harness should call.
         """
         if spectrum is not None:
-            self.spectrum = SPECTRA.create(spectrum)
+            self.spectrum = SPECTRA.create(spectrum, **(spectrum_kwargs or {}))
             self._log(f"spectrum  -> {self.spectrum!r}", BANNER_LEVEL)
         if field is not None:
-            self.field = FIELDS.create(field, spectrum=self.spectrum)
+            self.field = FIELDS.create(
+                field, spectrum=self.spectrum, **(field_kwargs or {})
+            )
             self._log(f"field     -> {self.field!r}", BANNER_LEVEL)
         if force_model is not None:
             self.force_model = FORCES.create(force_model)
