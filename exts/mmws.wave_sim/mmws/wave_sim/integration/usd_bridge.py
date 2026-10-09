@@ -81,12 +81,21 @@ class VesselBridge:
             value = mass_api.GetMassAttr().Get()
             if value is not None and value > 0.0:
                 self.mass = float(value)
+            # USD uses sentinels for "unspecified, let PhysX work it out":
+            # centerOfMass defaults to (-inf, -inf, -inf) and diagonalInertia
+            # to (0, 0, 0). Reading either literally is poison - an infinite
+            # centre of mass makes every moment arm infinite, PhysX receives a
+            # NaN torque, and the body leaves the scene at implausible speed.
             value = mass_api.GetDiagonalInertiaAttr().Get()
             if value is not None:
-                self.inertia = np.array(value, dtype=float)
+                inertia = np.array(value, dtype=float)
+                if np.all(np.isfinite(inertia)) and np.any(inertia > 0.0):
+                    self.inertia = inertia
             value = mass_api.GetCenterOfMassAttr().Get()
             if value is not None:
-                self.center_of_mass = np.array(value, dtype=float)
+                com = np.array(value, dtype=float)
+                if np.all(np.isfinite(com)):
+                    self.center_of_mass = com
 
         self._force_api = PhysxSchema.PhysxForceAPI.Apply(body)
         self._force_api.CreateWorldFrameEnabledAttr(False)
@@ -115,5 +124,10 @@ class VesselBridge:
         if self._force_api is None:
             raise RuntimeError("bind() before apply()")
         f, m = wrench.force, wrench.moment
+        # Never hand PhysX a non-finite wrench. One NaN torque is enough to
+        # fling a body out of the scene, and the symptom looks nothing like
+        # its cause, so fail here with something readable instead.
+        if not (np.all(np.isfinite(f)) and np.all(np.isfinite(m))):
+            raise ValueError(f"non-finite wrench: force={f}, moment={m}")
         self._force_api.GetForceAttr().Set(Gf.Vec3f(float(f[0]), float(f[1]), float(f[2])))
         self._force_api.GetTorqueAttr().Set(Gf.Vec3f(float(m[0]), float(m[1]), float(m[2])))
