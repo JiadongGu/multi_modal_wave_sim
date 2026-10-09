@@ -623,6 +623,24 @@ def test_mixed_winding_is_detectable_and_fixable():
     assert abs(float(ff[0])) < 1e-6 and abs(float(ff[1])) < 1e-6, f"sideways force remains: {ff}"
 
 
+def test_damping_is_zero_in_air():
+    """Water damps, air does not. A hull in flight must be in free fall, not
+    dragging against nothing - otherwise a dry falling body feels forces that
+    make a force log impossible to read."""
+    field = FIELDS.create("fft", spectrum=SPECTRA.create("jonswap", hs=2.0, tp=7.0),
+                          tile_size=256.0, resolution=64, seed=3)
+    field.advance(0.0)
+    d = FORCES.create("damping", extents=[1.0, 1.0, 1.0])
+    airborne = BodyState(position=np.array([150.0, 150.0, 50.0]),
+                         linear_velocity=np.array([0.0, 0.0, -20.0]), mass=200.0)
+    assert np.allclose(d.wrench(airborne, field, 0.0).as_array(), np.zeros(6)), \
+        "a hull 50 m above the water felt drag"
+    surface = float(np.asarray(field.height(np.array([150.0]), np.array([150.0])))[0])
+    wet = BodyState(position=np.array([150.0, 150.0, surface - 1.0]),
+                    linear_velocity=np.array([0.0, 0.0, -20.0]), mass=200.0)
+    assert abs(float(d.wrench(wet, field, 0.0).force[2])) > 100.0, "submerged hull felt no drag"
+
+
 def test_damping_opposes_motion_and_vanishes_at_rest():
     d = FORCES.create("damping", extents=[1.0, 1.0, 1.0])
     at_rest = BodyState()
@@ -763,6 +781,7 @@ TESTS = [
     ("repair: fixes winding", test_repair_fixes_winding, True),
     ("repair: matches a clean hull's forces", test_repair_gives_the_same_forces_as_a_clean_hull, True),
     ("repair: mixed winding detected and fixed", test_mixed_winding_is_detectable_and_fixable, True),
+    ("damping: zero in air, present in water", test_damping_is_zero_in_air, True),
     ("damping: opposes motion, zero at rest", test_damping_opposes_motion_and_vanishes_at_rest, True),
     ("damping: grows faster than linearly", test_damping_grows_faster_than_linearly, True),
     ("damping: cannot reverse the velocity", test_damping_cannot_reverse_the_velocity, True),

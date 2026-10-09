@@ -64,7 +64,7 @@ class LinearQuadraticDamping(ForceModel):
 
     def __init__(self, linear=None, quadratic=None, extents=None,
                  drag_coefficient: float = 1.0, timestep: float = 1.0 / 60.0,
-                 density: float = WATER_DENSITY) -> None:
+                 density: float = WATER_DENSITY, height: float = None) -> None:
         if timestep <= 0.0:
             raise ValueError(f"timestep must be positive, got {timestep}")
         self.timestep = float(timestep)
@@ -88,13 +88,29 @@ class LinearQuadraticDamping(ForceModel):
         self.linear = np.asarray(linear, dtype=float).ravel()
         if self.linear.size != 6:
             raise ValueError(f"linear must have 6 entries, got {self.linear.size}")
+        # Hull height, used to work out how much of it is actually in the water.
+        if height is None and extents is not None:
+            height = float(np.asarray(extents, dtype=float).ravel()[2])
+        self.height = float(height) if height else 1.0
 
     def wrench(self, body: BodyState, wave_field, t: float) -> Wrench:
         nu = np.concatenate([
             np.asarray(body.linear_velocity, dtype=float),
             np.asarray(body.angular_velocity, dtype=float),
         ])
-        k = self.linear + self.quadratic * np.abs(nu)
+        # Water damps; air does not, to any degree that matters here. Scale by
+        # how much of the hull is submerged, so a hull in flight is in free
+        # fall rather than dragging against nothing.
+        wet = 1.0
+        if wave_field is not None:
+            z = float(np.asarray(body.position, dtype=float)[2])
+            x, y = (float(v) for v in np.asarray(body.position, dtype=float)[:2])
+            surface = float(np.asarray(wave_field.height(np.array([x]), np.array([y])))[0])
+            wet = float(np.clip((surface - (z - 0.5 * self.height)) / self.height, 0.0, 1.0))
+        if wet <= 0.0:
+            return Wrench()
+
+        k = wet * (self.linear + self.quadratic * np.abs(nu))
         inertia = np.asarray(body.inertia, dtype=float).ravel()
         if inertia.size != 3 or not np.all(inertia > 0.0):
             inertia = np.ones(3)
