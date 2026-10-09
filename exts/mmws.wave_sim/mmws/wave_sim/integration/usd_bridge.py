@@ -128,8 +128,18 @@ class VesselBridge:
 
         body = self.stage.GetPrimAtPath(self.body_path)
         xf = UsdGeom.Xformable(body).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+        position = np.array(xf.ExtractTranslation(), dtype=float)
+        # Beyond about a thousand kilometres, float64 has lost enough precision
+        # that the wave field's modulo wrap returns noise and every force after
+        # it is meaningless. A hull that got there is not recoverable by damping
+        # or anything else - say so, rather than computing nonsense politely.
+        if not np.all(np.isfinite(position)) or np.max(np.abs(position)) > 1.0e6:
+            raise ValueError(
+                f"vessel is at {np.round(position, 1)} - outside the usable range. "
+                "Stop the timeline and reset its transform."
+            )
         return body_state_from_usd(
-            position=np.array(xf.ExtractTranslation(), dtype=float),
+            position=position,
             orientation=quat_to_wxyz(xf.ExtractRotationQuat()),
             linear_velocity=body.GetAttribute("physics:velocity").Get(),
             angular_velocity_deg=body.GetAttribute("physics:angularVelocity").Get(),
