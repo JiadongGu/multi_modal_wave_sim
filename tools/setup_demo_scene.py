@@ -55,8 +55,13 @@ mesh.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(vertices.astype(np.float32)))
 mesh.CreateFaceVertexCountsAttr(Vt.IntArray.FromNumpy(np.full(len(triangles), 3, np.int32)))
 mesh.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(triangles.ravel().astype(np.int32)))
 mesh.CreateSubdivisionSchemeAttr().Set("none")
-mesh.CreateExtentAttr(Vt.Vec3fArray([Gf.Vec3f(*vertices.min(axis=0).astype(np.float32)),
-                                     Gf.Vec3f(*vertices.max(axis=0).astype(np.float32))]))
+# Gf.Vec3f takes Python floats, not numpy scalars - unpacking a numpy array
+# straight into it raises an ArgumentError that names every overload but the
+# one you wanted.
+mesh.CreateExtentAttr(Vt.Vec3fArray([
+    Gf.Vec3f(*(float(v) for v in vertices.min(axis=0))),
+    Gf.Vec3f(*(float(v) for v in vertices.max(axis=0))),
+]))
 
 prim = mesh.GetPrim()
 UsdPhysics.RigidBodyAPI.Apply(prim)
