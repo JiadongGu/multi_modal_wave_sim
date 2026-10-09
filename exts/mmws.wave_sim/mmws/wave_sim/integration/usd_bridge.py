@@ -29,6 +29,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..forces import BodyState, Wrench
+from .repair import open_edges, orient_faces, signed_volume, weld_vertices
 from .convert import (
     body_state_from_usd,
     quat_to_wxyz,
@@ -75,6 +76,25 @@ class VesselBridge:
             mesh.GetFaceVertexCountsAttr().Get(),
             mesh.GetFaceVertexIndicesAttr().Get(),
         )
+
+        # Authored meshes cannot be trusted to wind consistently, and an
+        # inward-facing face has its pressure pulling instead of pushing. The
+        # side faces then add instead of cancelling, so a cube in still water
+        # picks up kilonewtons of sideways force and the system stops being
+        # conservative - the hull gains energy every cycle until it leaves.
+        # Weld first so neighbouring faces actually share edges, otherwise the
+        # adjacency walk has nothing to walk.
+        self.vertices, self.triangles = weld_vertices(self.vertices, self.triangles)
+        self.triangles = orient_faces(self.vertices, self.triangles)
+        self.open_edges = open_edges(self.triangles)
+        self.volume = signed_volume(self.vertices, self.triangles)
+        if self.open_edges:
+            raise ValueError(
+                f"hull is not watertight: {self.open_edges} open edges. "
+                "Pressure integration needs a closed surface."
+            )
+        if self.volume <= 0.0:
+            raise ValueError(f"hull encloses no volume (got {self.volume:.6f} m^3)")
 
         mass_api = UsdPhysics.MassAPI.Get(self.stage, self.body_path)
         if mass_api:

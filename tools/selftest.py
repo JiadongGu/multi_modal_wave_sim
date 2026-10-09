@@ -594,6 +594,35 @@ def test_repair_gives_the_same_forces_as_a_clean_hull():
     assert np.allclose(a, b, atol=1e-9), f"repaired hull disagrees: {a} vs {b}"
 
 
+def test_mixed_winding_is_detectable_and_fixable():
+    """An authored mesh with some faces reversed gives kilonewtons of sideways
+    force and no lift - the signature of a hull that needs orienting. The
+    enclosed volume is the cheap detector: it reads low, so a bind-time check
+    on volume catches it before any force is believed."""
+    from mmws.wave_sim.integration.repair import orient_faces, signed_volume
+
+    v, t = _box(1.0, 1.0, 1.0)
+    mixed = t.copy()
+    mixed[[1, 4, 7, 10]] = mixed[[1, 4, 7, 10]][:, [0, 2, 1]]
+
+    class _F:
+        height = staticmethod(FLAT)
+
+    state = body_state_from_usd([0, 0, -0.3], [1, 0, 0, 0], mass=200.0)
+    bad = FORCES.create("buoyancy_pressure", vertices=v, triangles=mixed)
+    fixed = FORCES.create("buoyancy_pressure", vertices=v, triangles=orient_faces(v, mixed))
+
+    assert signed_volume(v, mixed) < 0.5, "a mixed-winding box should read low volume"
+    assert_close(signed_volume(v, orient_faces(v, mixed)), 1.0, 1e-9, "volume after orienting")
+
+    fb = bad.wrench(state, _F(), 0.0).force
+    assert abs(float(fb[0])) > 1000.0, f"expected large spurious sideways force, got {fb}"
+
+    ff = fixed.wrench(state, _F(), 0.0).force
+    assert_close(float(ff[2]), 7845.3, 1.0, "lift after orienting")
+    assert abs(float(ff[0])) < 1e-6 and abs(float(ff[1])) < 1e-6, f"sideways force remains: {ff}"
+
+
 # ------------------------------------------------------------------------- main
 
 TESTS = [
@@ -657,6 +686,7 @@ TESTS = [
     ("repair: recovers the volume", test_repair_recovers_the_volume, True),
     ("repair: fixes winding", test_repair_fixes_winding, True),
     ("repair: matches a clean hull's forces", test_repair_gives_the_same_forces_as_a_clean_hull, True),
+    ("repair: mixed winding detected and fixed", test_mixed_winding_is_detectable_and_fixable, True),
 ]
 
 

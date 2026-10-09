@@ -151,8 +151,9 @@ class MultiModalWaveSimExtension(_ExtBase):
                 BANNER_LEVEL,
             )
             self._log(
-                f"  hull extents (body frame)  x {lo[0]:.2f}..{hi[0]:.2f}  "
-                f"y {lo[1]:.2f}..{hi[1]:.2f}  z {lo[2]:.2f}..{hi[2]:.2f} m",
+                f"  hull  x {lo[0]:.2f}..{hi[0]:.2f}  y {lo[1]:.2f}..{hi[1]:.2f}  "
+                f"z {lo[2]:.2f}..{hi[2]:.2f} m   volume {bridge.volume:.4f} m^3   "
+                f"floats at {bridge.mass / 1000.0:.4f} m^3 displaced",
                 BANNER_LEVEL,
             )
             return True
