@@ -208,6 +208,7 @@ class MultiModalWaveSimExtension(_ExtBase):
                 self._step_count = 0
                 self._sim_time = 0.0
                 self._last_draw = 0.0
+                self._wet_steps = 0
                 self.vessel = None
                 self._log("timeline stopped, counters reset", BANNER_LEVEL)
         except Exception:                             # noqa: BLE001
@@ -248,18 +249,27 @@ class MultiModalWaveSimExtension(_ExtBase):
                 # Diagnostic, roughly twice a second. Three questions at once:
                 # is the pose updating, is the water height sane, is the force
                 # the right order of magnitude for this hull and mass.
-                if DIAGNOSTIC and self._step_count % 30 == 0:
-                    import numpy as _np
+                # Log every step where the hull is actually touching water,
+                # capped so a stuck vessel cannot flood the console. Sampling
+                # on a step interval misses the impact entirely when the body
+                # crosses the surface in a few milliseconds.
+                import numpy as _np
 
+                wet = bool(_np.any(_np.abs(wrench.force) > 1e-6))
+                if wet:
+                    self._wet_steps = getattr(self, "_wet_steps", 0) + 1
+                if DIAGNOSTIC and ((wet and self._wet_steps <= 60)
+                                   or self._step_count % 30 == 0):
                     px, py, pz = (float(v) for v in state.position)
                     wz = float(_np.asarray(self.field.height(
                         _np.array([px]), _np.array([py])))[0])
-                    f = wrench.force
-                    weight = state.mass * 9.80665
+                    f, m = wrench.force, wrench.moment
+                    vz = float(state.linear_velocity[2])
                     self._log(
-                        f"  body z={pz:+7.3f}  water z={wz:+6.3f}  "
-                        f"depth={wz - pz:+6.3f}  F=({f[0]:+8.1f},{f[1]:+8.1f},"
-                        f"{f[2]:+9.1f}) N  weight={weight:7.1f} N",
+                        f"  z={pz:+8.3f} vz={vz:+7.2f}  water={wz:+6.3f} "
+                        f"depth={wz - pz:+7.3f}  F=({f[0]:+7.0f},{f[1]:+7.0f},"
+                        f"{f[2]:+8.0f})  M=({m[0]:+6.0f},{m[1]:+6.0f},{m[2]:+6.0f})"
+                        f"  wt={state.mass * 9.80665:.0f}",
                         "warn",
                     )
             except Exception as exc:                  # noqa: BLE001
