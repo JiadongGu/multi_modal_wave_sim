@@ -10,8 +10,11 @@ the winding is known to be outward and the size is known to be exactly 1 m.
 That matters: the whole point of this scene is that the answer is known in
 advance. 1 m cube, 200 kg, fresh water -> 0.200 m draft, every time.
 
-No collider is applied. Buoyancy is an external force and needs no contact; a
-collider only invites the hull to hit something.
+A collider IS applied, even though buoyancy needs no contact. PhysX derives a
+body's mass properties from its collision shapes, and a rigid body with none
+may not honour MassAPI at all - which shows up as a hull accelerating as if it
+weighed a fraction of what you set. Nothing else in this scene has a collider,
+so there is nothing for it to hit.
 
 Stop the timeline before running this - while it is playing, PhysX owns the
 transform and anything set here is overwritten immediately.
@@ -65,6 +68,7 @@ mesh.CreateExtentAttr(Vt.Vec3fArray([
 
 prim = mesh.GetPrim()
 UsdPhysics.RigidBodyAPI.Apply(prim)
+UsdPhysics.CollisionAPI.Apply(prim)
 UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(MASS)
 
 xf = UsdGeom.Xformable(prim)
@@ -75,7 +79,7 @@ print()
 print(f"  {VESSEL}")
 print(f"    mesh          {prim.IsA(UsdGeom.Mesh)}  ({len(vertices)} verts, {len(triangles)} tris)")
 print(f"    rigid body    {prim.HasAPI(UsdPhysics.RigidBodyAPI)}")
-print(f"    collider      {prim.HasAPI(UsdPhysics.CollisionAPI)}  (intentionally none)")
+print(f"    collider      {prim.HasAPI(UsdPhysics.CollisionAPI)}  (for mass properties)")
 print(f"    mass          {UsdPhysics.MassAPI(prim).GetMassAttr().Get()} kg")
 print(f"    position      {POSITION}")
 print()

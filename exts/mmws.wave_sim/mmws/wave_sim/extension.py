@@ -220,6 +220,7 @@ class MultiModalWaveSimExtension(_ExtBase):
                 self._sim_time = 0.0
                 self._last_draw = 0.0
                 self._wet_steps = 0
+                self._prev_vz = None
                 self.vessel = None
                 self._log("timeline stopped, counters reset", BANNER_LEVEL)
         except Exception:                             # noqa: BLE001
@@ -276,11 +277,23 @@ class MultiModalWaveSimExtension(_ExtBase):
                         _np.array([px]), _np.array([py])))[0])
                     f, m = wrench.force, wrench.moment
                     vz = float(state.linear_velocity[2])
+                    # What PhysX actually did last step, against what this
+                    # force and this mass say it should have done. A mismatch
+                    # means the body's mass is not what we think, or something
+                    # else is pushing it.
+                    prev = getattr(self, "_prev_vz", None)
+                    prev_f = getattr(self, "_prev_fz", 0.0)
+                    if prev is None or dt <= 0.0:
+                        implied = state.mass
+                    else:
+                        accel = (vz - prev) / dt + 9.80665
+                        implied = prev_f / accel if abs(accel) > 1e-6 else float("inf")
+                    self._prev_vz, self._prev_fz = vz, float(f[2])
                     self._log(
                         f"  z={pz:+8.3f} vz={vz:+7.2f}  water={wz:+6.3f} "
                         f"depth={wz - pz:+7.3f}  F=({f[0]:+7.0f},{f[1]:+7.0f},"
-                        f"{f[2]:+8.0f})  M=({m[0]:+6.0f},{m[1]:+6.0f},{m[2]:+6.0f})"
-                        f"  wt={state.mass * 9.80665:.0f}",
+                        f"{f[2]:+8.0f})  m_set={state.mass:.0f} m_implied="
+                        f"{implied:+.1f}",
                         "warn",
                     )
             except Exception as exc:                  # noqa: BLE001
