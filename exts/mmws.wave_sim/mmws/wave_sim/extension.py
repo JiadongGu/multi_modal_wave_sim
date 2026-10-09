@@ -140,9 +140,16 @@ class MultiModalWaveSimExtension(_ExtBase):
                 vertices=bridge.vertices,
                 triangles=bridge.triangles,
             )
+            lo = bridge.vertices.min(axis=0)
+            hi = bridge.vertices.max(axis=0)
             self._log(
                 f"vessel    -> {body_path}  ({len(bridge.vertices)} verts, "
                 f"{len(bridge.triangles)} tris, mass {bridge.mass:.1f} kg)",
+                BANNER_LEVEL,
+            )
+            self._log(
+                f"  hull extents (body frame)  x {lo[0]:.2f}..{hi[0]:.2f}  "
+                f"y {lo[1]:.2f}..{hi[1]:.2f}  z {lo[2]:.2f}..{hi[2]:.2f} m",
                 BANNER_LEVEL,
             )
             return True

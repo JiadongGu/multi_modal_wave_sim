@@ -77,8 +77,11 @@ def transform_points(points, matrix):
     write M @ p. Mixing them gives a transform that rotates correctly and
     translates to nonsense, which looks like a hull offset bug.
     """
-    # TODO(jiadong): see the docstring. Row-vector convention.
-    raise NotImplementedError("transform_points is not implemented yet")
+    m = np.asarray(matrix, dtype=float)
+    if m.shape != (4, 4):
+        raise ValueError(f"expected a 4x4 matrix, got {m.shape}")
+    p = np.asarray(points, dtype=float)
+    return p @ m[:3, :3] + m[3, :3]
 
 
 def relative_transform(child_to_world, parent_to_world):
@@ -90,5 +93,8 @@ def relative_transform(child_to_world, parent_to_world):
 
     Row-vector convention again, so it is C @ inv(P), not inv(P) @ C.
     """
-    # TODO(jiadong): see the docstring. Row-vector convention.
-    raise NotImplementedError("relative_transform is not implemented yet")
+    c = np.asarray(child_to_world, dtype=float)
+    p = np.asarray(parent_to_world, dtype=float)
+    if c.shape != (4, 4) or p.shape != (4, 4):
+        raise ValueError(f"expected two 4x4 matrices, got {c.shape} and {p.shape}")
+    return c @ np.linalg.inv(p)
