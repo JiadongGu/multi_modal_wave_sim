@@ -47,6 +47,11 @@ class MultiModalWaveSimExtension(_ExtBase):
         self.field = None
         self.force_model = None
 
+        # Bound on Play, not here: the hull comes off the stage, so the force
+        # model cannot be built until a prim actually exists to read it from.
+        self.vessel = None
+        self.vessel_path = "/World/Vessel"
+
         self._log(f"starting up (ext_id={ext_id})", BANNER_LEVEL)
         self._log(f"  spectra:      {', '.join(SPECTRA.names()) or '(none)'}", BANNER_LEVEL)
         self._log(f"  wave fields:  {', '.join(FIELDS.names()) or '(none)'}", BANNER_LEVEL)
@@ -77,6 +82,11 @@ class MultiModalWaveSimExtension(_ExtBase):
         self.spectrum = None
         self.field = None
         self.force_model = None
+
+        # Bound on Play, not here: the hull comes off the stage, so the force
+        # model cannot be built until a prim actually exists to read it from.
+        self.vessel = None
+        self.vessel_path = "/World/Vessel"
         self._log("shut down", BANNER_LEVEL)
 
     # ------------------------------------------------------------------ the swap
@@ -106,6 +116,40 @@ class MultiModalWaveSimExtension(_ExtBase):
         if force_model is not None:
             self.force_model = FORCES.create(force_model)
             self._log(f"forces    -> {self.force_model!r}", BANNER_LEVEL)
+
+    # ------------------------------------------------------------------ vessel
+
+    def bind_vessel(self, body_path: str = None, hull_path: str = None) -> bool:
+        """Attach to a rigid body on the stage and build its force model.
+
+        The hull geometry comes from the stage, so the force model cannot exist
+        before this succeeds. That is why selecting "buoyancy_pressure" by name
+        in `select()` is not enough on its own - it needs a mesh.
+        """
+        body_path = body_path or self.vessel_path
+        try:
+            import omni.usd
+
+            from .integration.usd_bridge import VesselBridge
+
+            bridge = VesselBridge(omni.usd.get_context().get_stage(), body_path, hull_path)
+            bridge.bind()
+            self.vessel = bridge
+            self.force_model = FORCES.create(
+                "buoyancy_pressure",
+                vertices=bridge.vertices,
+                triangles=bridge.triangles,
+            )
+            self._log(
+                f"vessel    -> {body_path}  ({len(bridge.vertices)} verts, "
+                f"{len(bridge.triangles)} tris, mass {bridge.mass:.1f} kg)",
+                BANNER_LEVEL,
+            )
+            return True
+        except Exception as exc:                      # noqa: BLE001
+            self._log(f"no vessel at {body_path} ({exc})", "error")
+            self.vessel = None
+            return False
 
     # ------------------------------------------------------------ subscriptions
 
@@ -147,10 +191,14 @@ class MultiModalWaveSimExtension(_ExtBase):
         try:
             import omni.timeline
 
+            if event.type == int(omni.timeline.TimelineEventType.PLAY):
+                if self.vessel is None:
+                    self.bind_vessel()
             if event.type == int(omni.timeline.TimelineEventType.STOP):
                 self._step_count = 0
                 self._sim_time = 0.0
                 self._last_draw = 0.0
+                self.vessel = None
                 self._log("timeline stopped, counters reset", BANNER_LEVEL)
         except Exception:                             # noqa: BLE001
             pass
@@ -180,6 +228,15 @@ class MultiModalWaveSimExtension(_ExtBase):
                 self._last_draw = self._sim_time
                 import omni.usd
                 self.field.write_mesh(omni.usd.get_context().get_stage())
+
+        if self.vessel is not None and self.force_model is not None and self.field is not None:
+            try:
+                state = self.vessel.read_state()
+                self.vessel.apply(self.force_model.wrench(state, self.field, self._sim_time))
+            except Exception as exc:                  # noqa: BLE001
+                # Drop the vessel rather than throw sixty times a second.
+                self._log(f"force step failed, detaching ({exc})", "error")
+                self.vessel = None
 
         # Proof of life without flooding the console: roughly once a second at
         # a 60 Hz step. Delete once there is real work here.
