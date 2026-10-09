@@ -166,8 +166,32 @@ def test_jonswap_sharper_than_pm():
     assert ratio > 1.3, f"gamma=3.3 should raise the peak well above PM, got {ratio:.2f}x"
 
 
-def test_eckv_hs_roundtrip():
-    _hs_roundtrip("eckv")
+def test_eckv_peak_matches_the_wind():
+    """ECKV takes wind, not Hs, so the peak comes from U10 - not from tp."""
+    s = SPECTRA.create("eckv", u10=10.0)
+    assert_close(s.k_p, 0.0692, 0.001, "peak wavenumber at U10=10")
+    assert_close(2 * math.pi / s.k_p, 90.8, 1.0, "peak wavelength at U10=10 [m]")
+
+
+def test_eckv_frequency_and_wavenumber_agree():
+    """S(omega) is S(k) times dk/domega. Both integrals must give the same m0."""
+    s = SPECTRA.create("eckv", u10=10.0)
+    k = np.linspace(1e-4, 500.0, 500000)
+    hs_k = 4.0 * math.sqrt(float(_trapezoid(np.asarray(s.wavenumber_energy(k)), k)))
+    assert_close(s.hs_from_spectrum(), hs_k, 0.02 * hs_k, "Hs via omega vs via k")
+
+
+def test_eckv_grows_with_wind():
+    hs = [SPECTRA.create("eckv", u10=float(u)).hs_from_spectrum() for u in (5, 10, 20)]
+    assert hs[0] < hs[1] < hs[2], f"Hs must increase with wind speed, got {hs}"
+    assert_close(hs[1], 2.6, 0.5, "Hs at U10=10 m/s")
+
+
+def test_eckv_zero_frequency_is_finite():
+    s = SPECTRA.create("eckv", u10=10.0)
+    v = np.asarray(s.energy(np.array([0.0, 0.5, 1.0])))
+    assert np.all(np.isfinite(v)), f"non-finite energy: {v}"
+    assert v[0] == 0.0, f"S(0) should be 0, got {v[0]}"
 
 
 # ------------------------------------------------------------------ wave field
@@ -462,7 +486,10 @@ TESTS = [
     ("JONSWAP: Hs round-trip", test_jonswap_hs_roundtrip, True),
     ("JONSWAP: gamma=1 equals PM", test_jonswap_reduces_to_pm, True),
     ("JONSWAP: gamma=3.3 sharpens peak", test_jonswap_sharper_than_pm, True),
-    ("ECKV: Hs round-trip", test_eckv_hs_roundtrip, True),
+    ("ECKV: peak matches the wind", test_eckv_peak_matches_the_wind, True),
+    ("ECKV: omega and k integrals agree", test_eckv_frequency_and_wavenumber_agree, True),
+    ("ECKV: Hs grows with wind", test_eckv_grows_with_wind, True),
+    ("ECKV: S(0) finite and zero", test_eckv_zero_frequency_is_finite, True),
 ]
 
 
