@@ -37,6 +37,26 @@ from dataclasses import dataclass, field as dataclass_field
 import numpy as np
 
 
+def quat_to_matrix(q):
+    """(w, x, y, z) quaternion -> 3x3 rotation matrix.
+
+    USD's Gf.Quatd is (w, x, y, z), so matching that order here avoids a whole
+    class of silent bug at the USD boundary. Normalises as it goes, so a
+    slightly stale quaternion from the physics engine does not quietly scale
+    every force.
+    """
+    w, x, y, z = (float(v) for v in np.asarray(q, dtype=float).ravel()[:4])
+    n = w * w + x * x + y * y + z * z
+    if n < 1e-12:
+        return np.eye(3)
+    s = 2.0 / n
+    return np.array([
+        [1 - s * (y * y + z * z), s * (x * y - w * z), s * (x * z + w * y)],
+        [s * (x * y + w * z), 1 - s * (x * x + z * z), s * (y * z - w * x)],
+        [s * (x * z - w * y), s * (y * z + w * x), 1 - s * (x * x + y * y)],
+    ])
+
+
 @dataclass
 class Wrench:
     """Force and moment in the body frame. SNAME ordering: X Y Z K M N."""

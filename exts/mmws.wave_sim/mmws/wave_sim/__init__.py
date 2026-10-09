@@ -23,6 +23,7 @@ from .spectra import eckv as _eckv                  # noqa: F401
 from .field import flat as _flat                    # noqa: F401
 from .field import fft as _fft                      # noqa: F401
 from .forces import zero as _zero                   # noqa: F401
+from .forces import buoyancy_pressure as _bp       # noqa: F401
 
 # Kit discovers the extension by scanning this module for omni.ext.IExt
 # subclasses, so the class has to be reachable from here.

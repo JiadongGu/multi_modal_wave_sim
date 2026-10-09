@@ -33,7 +33,8 @@ _trapezoid = getattr(np, "trapezoid", None) or np.trapz
 
 from mmws.wave_sim import FIELDS, FORCES, SPECTRA          # noqa: E402
 from mmws.wave_sim.field import deep_water_omega           # noqa: E402
-from mmws.wave_sim.forces import BodyState                 # noqa: E402
+from mmws.wave_sim.forces import BodyState, box_hull, quat_to_matrix  # noqa: E402
+from mmws.wave_sim.globals import GRAVITY, WATER_DENSITY   # noqa: E402
 
 PASS, FAIL, XFAIL = [], [], []
 
@@ -319,6 +320,104 @@ def test_wrench_addition():
     assert np.allclose(total, [2, 0, 0, 0, 4, 0]), total
 
 
+# ------------------------------------------------- pressure-based buoyancy
+
+FLAT = lambda x, y: np.zeros_like(np.asarray(x, dtype=float))
+
+
+def _press(**kw):
+    v, tri = box_hull(2.0, 1.0, 0.5)
+    return FORCES.create("buoyancy_pressure", vertices=v, triangles=tri, **kw)
+
+
+def _at(model, z, height_fn=FLAT, quat=(1.0, 0.0, 0.0, 0.0)):
+    class _F:
+        height = staticmethod(height_fn)
+    body = BodyState(position=np.array([0.0, 0.0, float(z)]),
+                     orientation=np.array(quat, dtype=float))
+    return model.wrench(body, _F(), 0.0)
+
+
+def test_quat_to_matrix():
+    assert np.allclose(quat_to_matrix([1, 0, 0, 0]), np.eye(3)), "identity quaternion"
+    import math
+    a = math.radians(90) / 2
+    R = quat_to_matrix([math.cos(a), 0.0, 0.0, math.sin(a)])    # 90 deg about z
+    assert np.allclose(R @ [1, 0, 0], [0, 1, 0], atol=1e-12), f"90 deg yaw gave {R @ [1,0,0]}"
+    assert np.allclose(R @ R.T, np.eye(3), atol=1e-12), "rotation must be orthonormal"
+
+
+def test_pressure_needs_a_hull():
+    try:
+        FORCES.create("buoyancy_pressure")
+    except (ValueError, TypeError):
+        return
+    raise AssertionError("a pressure model with no hull should not construct")
+
+
+def test_pressure_archimedes_exact():
+    """No calibration constant: the pressure integral IS rho g V, at every draft."""
+    m = _press()
+    for centre_z, draft in ((0.15, 0.10), (0.05, 0.20), (0.0, 0.25), (-0.05, 0.30)):
+        want = WATER_DENSITY * GRAVITY * (2.0 * 1.0 * draft)
+        got = float(_at(m, centre_z).force[2])
+        assert_close(got, want, 1e-6 * want, f"buoyancy at draft {draft} m")
+
+
+def test_pressure_dry_hull_is_zero():
+    assert np.allclose(_at(_press(), 1.0).as_array(), np.zeros(6)), "airborne hull has force"
+
+
+def test_pressure_fully_submerged_is_capped():
+    """Deeper than full immersion must not keep adding force - that is Archimedes."""
+    m = _press()
+    full = WATER_DENSITY * GRAVITY * (2.0 * 1.0 * 0.5)
+    for z in (-0.25, -1.0, -50.0):
+        assert_close(float(_at(m, z).force[2]), full, 1e-6 * full, f"submerged at z={z}")
+
+
+def test_pressure_flat_water_has_no_horizontal_force():
+    f = _at(_press(), 0.05).force
+    assert abs(float(f[0])) < 1e-9 and abs(float(f[1])) < 1e-9, f"flat water pushed sideways: {f}"
+
+
+def test_pressure_slope_gives_horizontal_force():
+    """The headline capability: Fx/Fz equals the water slope. ASTRA cannot do this."""
+    m = _press()
+    for slope in (0.05, 0.10, 0.20):
+        w = _at(m, 0.05, height_fn=lambda x, y, s=slope: s * np.asarray(x, dtype=float))
+        ratio = float(w.force[0]) / float(w.force[2])
+        assert_close(ratio, -slope, 0.02 * slope, f"Fx/Fz on a {slope} slope")
+
+
+def test_pressure_rotation_does_not_change_displaced_volume():
+    import math
+    m = _press()
+    full = WATER_DENSITY * GRAVITY * 1.0
+    for deg in (0, 15, 30, 45):
+        a = math.radians(deg) / 2
+        q = (math.cos(a), 0.0, math.sin(a), 0.0)
+        # The wrench is body-frame, so a pitched hull splits the upward world
+        # force across body x and z. The magnitude is what must be invariant.
+        got = float(np.linalg.norm(_at(m, -1.0, quat=q).force))
+        assert_close(got, full, 1e-6 * full, f"fully submerged at {deg} deg pitch")
+
+
+def test_pressure_moment_small_for_a_level_box():
+    """A level box should have no moment, and very nearly does.
+
+    Pressure is evaluated at each triangle's CENTROID, which gives the exact
+    force but a slightly high application point - the resultant really acts at
+    the centre of pressure, which sits lower on a face whose pressure varies.
+    So a coarse hull shows a small spurious moment that converges away under
+    refinement: 27.8 mm of equivalent arm at 12 triangles, 1.0 mm at 768.
+    Implementing the centre-of-pressure correction removes it outright.
+    """
+    w = _at(_press(), 0.05)
+    arm = float(np.linalg.norm(w.moment)) / float(w.force[2])
+    assert arm < 0.03 * 2.0, f"moment arm {arm * 1000:.1f} mm on a 2 m hull is too large"
+
+
 # ------------------------------------------------------------------------- main
 
 TESTS = [
@@ -350,6 +449,15 @@ TESTS = [
     ("mesh: topology is static", test_mesh_topology_is_static, True),
     ("mesh: winding faces up", test_mesh_winding_faces_up, True),
     ("mesh: works for the flat field", test_mesh_works_for_flat_field, True),
+    ("quat_to_matrix", test_quat_to_matrix, True),
+    ("pressure: rejects a missing hull", test_pressure_needs_a_hull, True),
+    ("pressure: Archimedes exact at every draft", test_pressure_archimedes_exact, True),
+    ("pressure: dry hull gives zero", test_pressure_dry_hull_is_zero, True),
+    ("pressure: submerged force is capped", test_pressure_fully_submerged_is_capped, True),
+    ("pressure: flat water has no sideways push", test_pressure_flat_water_has_no_horizontal_force, True),
+    ("pressure: slope gives horizontal force", test_pressure_slope_gives_horizontal_force, True),
+    ("pressure: rotation preserves displacement", test_pressure_rotation_does_not_change_displaced_volume, True),
+    ("pressure: level box has a near-zero moment", test_pressure_moment_small_for_a_level_box, True),
     # --- stubs you are going to implement -------------------------------------
     ("JONSWAP: Hs round-trip", test_jonswap_hs_roundtrip, True),
     ("JONSWAP: gamma=1 equals PM", test_jonswap_reduces_to_pm, True),
