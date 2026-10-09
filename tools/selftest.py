@@ -632,12 +632,30 @@ def test_damping_opposes_motion_and_vanishes_at_rest():
     assert f[0] < 0 and f[2] > 0, f"drag must oppose velocity, got {f}"
 
 
-def test_damping_is_quadratic_at_speed():
+def test_damping_grows_faster_than_linearly():
+    """Near-quadratic at working speeds. Not exactly 4x on doubling, because
+    the step is solved implicitly and the force saturates toward m|nu|/dt -
+    which is the property that keeps it stable."""
     d = FORCES.create("damping", extents=[1.0, 1.0, 1.0])
+
     def drag(v):
         return abs(float(d.wrench(
-            BodyState(linear_velocity=np.array([0.0, 0.0, v])), None, 0.0).force[2]))
-    assert drag(10.0) / drag(5.0) > 3.5, "doubling speed should roughly quadruple drag"
+            BodyState(linear_velocity=np.array([0.0, 0.0, v]), mass=200.0),
+            None, 0.0).force[2]))
+
+    assert drag(10.0) / drag(5.0) > 3.0, f"ratio {drag(10.0) / drag(5.0):.2f}"
+
+
+def test_damping_cannot_reverse_the_velocity():
+    """The explicit form overshoots above (m/D)/dt - 24 m/s for this hull - and
+    amplifies instead of damping, which destroys the simulation. The implicit
+    form must never remove more momentum than the body has."""
+    d = FORCES.create("damping", extents=[1.0, 1.0, 1.0], timestep=1.0 / 60.0)
+    mass, dt = 200.0, 1.0 / 60.0
+    for v in (5.0, 24.0, 60.0, 200.0, 5000.0):
+        state = BodyState(linear_velocity=np.array([0.0, 0.0, v]), mass=mass)
+        dv = float(d.wrench(state, None, 0.0).force[2]) / mass * dt
+        assert -v < dv <= 0.0, f"at {v} m/s the step changed velocity by {dv:+.2f}"
 
 
 def test_composite_sums_its_models():
@@ -746,7 +764,8 @@ TESTS = [
     ("repair: matches a clean hull's forces", test_repair_gives_the_same_forces_as_a_clean_hull, True),
     ("repair: mixed winding detected and fixed", test_mixed_winding_is_detectable_and_fixable, True),
     ("damping: opposes motion, zero at rest", test_damping_opposes_motion_and_vanishes_at_rest, True),
-    ("damping: quadratic at speed", test_damping_is_quadratic_at_speed, True),
+    ("damping: grows faster than linearly", test_damping_grows_faster_than_linearly, True),
+    ("damping: cannot reverse the velocity", test_damping_cannot_reverse_the_velocity, True),
     ("composite: sums its models", test_composite_sums_its_models, True),
     ("damping: stops the energy pump", test_damping_stops_the_energy_pump, True),
 ]

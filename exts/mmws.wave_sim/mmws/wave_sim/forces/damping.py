@@ -27,6 +27,26 @@ per-vessel constants elsewhere in this project.
 Rotational terms use the same form with a representative lever arm, which is
 cruder - a proper value needs the hull's second moment of area. Good enough to
 stop the ringing; replace it when the damping is being matched to data.
+
+Why this is solved implicitly
+-----------------------------
+Applied explicitly, quadratic drag is only stable while
+
+    (D/m) |nu| dt < 1
+
+which for a 1 m cube at 60 Hz means |nu| < 24 m/s. Past that the drag
+overshoots, reverses the velocity, and amplifies it every step: a hull at
+60 m/s diverges within ten steps. Since an undamped hull can easily reach
+those speeds before the damping ever engages, the damping itself becomes the
+thing that destroys the simulation.
+
+So the step is solved exactly instead. For nu' = -(k/m) nu the solution over
+dt is nu_new = nu / (1 + k dt/m), giving
+
+    tau = -k nu / (1 + k dt / m)
+
+which equals the explicit form as dt -> 0 and is bounded for any speed. It
+needs the step size, hence `timestep` - set it to the physics step.
 """
 
 from __future__ import annotations
@@ -43,8 +63,11 @@ class LinearQuadraticDamping(ForceModel):
     """tau = -(D_lin + D_quad * |nu|) nu, in the body frame."""
 
     def __init__(self, linear=None, quadratic=None, extents=None,
-                 drag_coefficient: float = 1.0,
+                 drag_coefficient: float = 1.0, timestep: float = 1.0 / 60.0,
                  density: float = WATER_DENSITY) -> None:
+        if timestep <= 0.0:
+            raise ValueError(f"timestep must be positive, got {timestep}")
+        self.timestep = float(timestep)
         if quadratic is None:
             if extents is None:
                 raise ValueError("damping needs either `quadratic` or hull `extents`")
@@ -71,5 +94,10 @@ class LinearQuadraticDamping(ForceModel):
             np.asarray(body.linear_velocity, dtype=float),
             np.asarray(body.angular_velocity, dtype=float),
         ])
-        tau = -(self.linear + self.quadratic * np.abs(nu)) * nu
+        k = self.linear + self.quadratic * np.abs(nu)
+        inertia = np.asarray(body.inertia, dtype=float).ravel()
+        if inertia.size != 3 or not np.all(inertia > 0.0):
+            inertia = np.ones(3)
+        generalised_mass = np.concatenate([np.full(3, max(body.mass, 1e-9)), inertia])
+        tau = -k * nu / (1.0 + k * self.timestep / generalised_mass)
         return Wrench(tau[:3], tau[3:])
