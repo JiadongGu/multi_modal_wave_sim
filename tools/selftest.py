@@ -546,6 +546,54 @@ def test_relative_transform_of_a_prim_with_itself_is_identity():
     assert np.allclose(relative_transform(P, P), np.eye(4), atol=1e-12)
 
 
+from mmws.wave_sim.integration.repair import (                # noqa: E402
+    open_edges, repair, signed_volume,
+)
+from mmws.wave_sim.forces import box_hull as _box              # noqa: E402
+
+
+def _exploded_box():
+    """A box as a bad exporter would emit it: one prim per triangle, every
+    corner point duplicated, and a third of the faces wound backwards."""
+    v, t = _box(2.0, 1.0, 0.5)
+    return [(v[tri], np.array([[0, 2, 1]] if i % 3 == 0 else [[0, 1, 2]]))
+            for i, tri in enumerate(t)]
+
+
+def test_repair_closes_an_exploded_box():
+    _, tris, rep = repair(_exploded_box())
+    assert rep["open_edges_before"] == 36, rep
+    assert rep["open_edges_after"] == 0, f"still open after welding: {rep}"
+    assert rep["vertices"] == 8, f"should weld down to 8 corners, got {rep['vertices']}"
+
+
+def test_repair_recovers_the_volume():
+    v, t, _ = repair(_exploded_box())
+    assert_close(signed_volume(v, t), 1.0, 1e-9, "volume of the repaired box")
+
+
+def test_repair_fixes_winding():
+    """Positive signed volume means the normals ended up pointing outward."""
+    v, t, _ = repair(_exploded_box())
+    assert signed_volume(v, t) > 0, "repaired mesh is inside-out"
+    assert open_edges(t) == 0
+
+
+def test_repair_gives_the_same_forces_as_a_clean_hull():
+    v, t = _box(2.0, 1.0, 0.5)
+    rv, rt, _ = repair(_exploded_box())
+    clean = FORCES.create("buoyancy_pressure", vertices=v, triangles=t)
+    fixed = FORCES.create("buoyancy_pressure", vertices=rv, triangles=rt)
+    state = body_state_from_usd([0, 0, 0.05], [1, 0, 0, 0])
+
+    class _F:
+        height = staticmethod(FLAT)
+
+    a = clean.wrench(state, _F(), 0.0).as_array()
+    b = fixed.wrench(state, _F(), 0.0).as_array()
+    assert np.allclose(a, b, atol=1e-9), f"repaired hull disagrees: {a} vs {b}"
+
+
 # ------------------------------------------------------------------------- main
 
 TESTS = [
@@ -605,6 +653,10 @@ TESTS = [
     ("usd: transform rotates", test_transform_points_rotates, True),
     ("usd: hull lands in the body frame", test_relative_transform_puts_the_hull_in_the_body_frame, True),
     ("usd: self-relative transform is identity", test_relative_transform_of_a_prim_with_itself_is_identity, True),
+    ("repair: closes an exploded box", test_repair_closes_an_exploded_box, True),
+    ("repair: recovers the volume", test_repair_recovers_the_volume, True),
+    ("repair: fixes winding", test_repair_fixes_winding, True),
+    ("repair: matches a clean hull's forces", test_repair_gives_the_same_forces_as_a_clean_hull, True),
 ]
 
 
