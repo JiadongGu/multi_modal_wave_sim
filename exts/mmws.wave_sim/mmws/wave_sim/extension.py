@@ -26,6 +26,9 @@ from .registry import FIELDS, FORCES, SPECTRA
 # "info" once the extension has a UI that makes its state visible.
 BANNER_LEVEL = "warn"
 
+# Per-step vessel diagnostics. Set False once the force path is trusted.
+DIAGNOSTIC = True
+
 
 class MultiModalWaveSimExtension(_ExtBase):
     """Lifecycle owner. Holds the current selection and the event handles."""
@@ -239,7 +242,26 @@ class MultiModalWaveSimExtension(_ExtBase):
         if self.vessel is not None and self.force_model is not None and self.field is not None:
             try:
                 state = self.vessel.read_state()
-                self.vessel.apply(self.force_model.wrench(state, self.field, self._sim_time))
+                wrench = self.force_model.wrench(state, self.field, self._sim_time)
+                self.vessel.apply(wrench)
+
+                # Diagnostic, roughly twice a second. Three questions at once:
+                # is the pose updating, is the water height sane, is the force
+                # the right order of magnitude for this hull and mass.
+                if DIAGNOSTIC and self._step_count % 30 == 0:
+                    import numpy as _np
+
+                    px, py, pz = (float(v) for v in state.position)
+                    wz = float(_np.asarray(self.field.height(
+                        _np.array([px]), _np.array([py])))[0])
+                    f = wrench.force
+                    weight = state.mass * 9.80665
+                    self._log(
+                        f"  body z={pz:+7.3f}  water z={wz:+6.3f}  "
+                        f"depth={wz - pz:+6.3f}  F=({f[0]:+8.1f},{f[1]:+8.1f},"
+                        f"{f[2]:+9.1f}) N  weight={weight:7.1f} N",
+                        "warn",
+                    )
             except Exception as exc:                  # noqa: BLE001
                 # Drop the vessel rather than throw sixty times a second.
                 self._log(f"force step failed, detaching ({exc})", "error")
