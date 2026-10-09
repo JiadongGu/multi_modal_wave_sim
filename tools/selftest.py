@@ -445,7 +445,7 @@ def test_pressure_moment_small_for_a_level_box():
 # --------------------------------------------------- usd conversion layer
 
 from mmws.wave_sim.integration import (                  # noqa: E402
-    body_state_from_usd, quat_to_wxyz, triangulate,
+    body_state_from_usd, quat_to_wxyz, relative_transform, transform_points, triangulate,
 )
 
 
@@ -514,6 +514,38 @@ def test_body_state_identity_is_a_passthrough():
     assert b.mass == 28.0
 
 
+def test_transform_points_uses_the_row_convention():
+    """USD puts translation in the last ROW. Column-convention code silently
+    rotates correctly and translates to nonsense."""
+    M = np.eye(4)
+    M[3, :3] = [10.0, 5.0, 0.2]
+    got = transform_points([[1.0, 0.0, 0.0]], M)
+    assert np.allclose(got, [[11.0, 5.0, 0.2]]), f"got {got}"
+
+
+def test_transform_points_rotates():
+    c, sn = math.cos(math.radians(90)), math.sin(math.radians(90))
+    R = np.eye(4)
+    R[:3, :3] = [[c, sn, 0], [-sn, c, 0], [0, 0, 1]]
+    assert np.allclose(transform_points([[1, 0, 0]], R), [[0, 1, 0]], atol=1e-12)
+
+
+def test_relative_transform_puts_the_hull_in_the_body_frame():
+    """A hull 2 m ahead of the body origin must read as 2 m forward, not as
+    its world position."""
+    child, parent = np.eye(4), np.eye(4)
+    child[3, :3] = [12.0, 5.0, 0.2]
+    parent[3, :3] = [10.0, 5.0, 0.2]
+    rel = relative_transform(child, parent)
+    assert np.allclose(transform_points([[0, 0, 0]], rel), [[2.0, 0.0, 0.0]], atol=1e-12)
+
+
+def test_relative_transform_of_a_prim_with_itself_is_identity():
+    P = np.eye(4)
+    P[3, :3] = [3.0, -1.0, 7.0]
+    assert np.allclose(relative_transform(P, P), np.eye(4), atol=1e-12)
+
+
 # ------------------------------------------------------------------------- main
 
 TESTS = [
@@ -569,6 +601,10 @@ TESTS = [
     ("usd: degrees become radians", test_body_state_converts_degrees_to_radians, True),
     ("usd: velocities rotate into the body frame", test_body_state_rotates_into_the_body_frame, True),
     ("usd: identity orientation passes through", test_body_state_identity_is_a_passthrough, True),
+    ("usd: transform uses the row convention", test_transform_points_uses_the_row_convention, True),
+    ("usd: transform rotates", test_transform_points_rotates, True),
+    ("usd: hull lands in the body frame", test_relative_transform_puts_the_hull_in_the_body_frame, True),
+    ("usd: self-relative transform is identity", test_relative_transform_of_a_prim_with_itself_is_identity, True),
 ]
 
 
