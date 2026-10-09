@@ -623,6 +623,64 @@ def test_mixed_winding_is_detectable_and_fixable():
     assert abs(float(ff[0])) < 1e-6 and abs(float(ff[1])) < 1e-6, f"sideways force remains: {ff}"
 
 
+def test_damping_opposes_motion_and_vanishes_at_rest():
+    d = FORCES.create("damping", extents=[1.0, 1.0, 1.0])
+    at_rest = BodyState()
+    assert np.allclose(d.wrench(at_rest, None, 0.0).as_array(), np.zeros(6)), "drag at rest"
+    moving = BodyState(linear_velocity=np.array([2.0, 0.0, -3.0]))
+    f = d.wrench(moving, None, 0.0).force
+    assert f[0] < 0 and f[2] > 0, f"drag must oppose velocity, got {f}"
+
+
+def test_damping_is_quadratic_at_speed():
+    d = FORCES.create("damping", extents=[1.0, 1.0, 1.0])
+    def drag(v):
+        return abs(float(d.wrench(
+            BodyState(linear_velocity=np.array([0.0, 0.0, v])), None, 0.0).force[2]))
+    assert drag(10.0) / drag(5.0) > 3.5, "doubling speed should roughly quadruple drag"
+
+
+def test_composite_sums_its_models():
+    v, tri = _box(1.0, 1.0, 1.0)
+    buoy = FORCES.create("buoyancy_pressure", vertices=v, triangles=tri)
+    damp = FORCES.create("damping", extents=[1.0, 1.0, 1.0])
+    both = FORCES.create("composite", models=[buoy, damp])
+
+    class _F:
+        height = staticmethod(FLAT)
+
+    state = BodyState(position=np.array([0.0, 0.0, -0.3]),
+                      orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+                      linear_velocity=np.array([0.0, 0.0, 2.0]), mass=200.0)
+    a = buoy.wrench(state, _F(), 0.0).as_array()
+    b = damp.wrench(state, _F(), 0.0).as_array()
+    assert np.allclose(both.wrench(state, _F(), 0.0).as_array(), a + b)
+
+
+def test_damping_stops_the_energy_pump():
+    """Undamped, a hull bouncing on a MOVING surface gains energy every cycle
+    and climbs above its drop height - the ball-on-a-vibrating-plate effect.
+    With damping it must never exceed where it started."""
+    v, tri = _box(1.0, 1.0, 1.0)
+    field = FIELDS.create("fft", spectrum=SPECTRA.create("jonswap", hs=2.0, tp=7.0),
+                          tile_size=256.0, resolution=64, seed=3)
+    model = FORCES.create("composite", models=[
+        FORCES.create("buoyancy_pressure", vertices=v, triangles=tri),
+        FORCES.create("damping", extents=[1.0, 1.0, 1.0]),
+    ])
+    z, vz, peak, dt, mass = 3.0, 0.0, 3.0, 1.0 / 60.0, 200.0
+    for i in range(1800):
+        field.advance(i * dt)
+        state = BodyState(position=np.array([150.0, 150.0, z]),
+                          orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+                          linear_velocity=np.array([0.0, 0.0, vz]), mass=mass)
+        vz += (float(model.wrench(state, field, i * dt).force[2]) / mass - GRAVITY) * dt
+        z += vz * dt
+        peak = max(peak, z)
+    assert peak <= 3.01, f"gained energy: rose to {peak:.2f} m from a 3.00 m drop"
+    assert -5.0 < z < 3.0, f"ended somewhere implausible: {z:.2f} m"
+
+
 # ------------------------------------------------------------------------- main
 
 TESTS = [
@@ -687,6 +745,10 @@ TESTS = [
     ("repair: fixes winding", test_repair_fixes_winding, True),
     ("repair: matches a clean hull's forces", test_repair_gives_the_same_forces_as_a_clean_hull, True),
     ("repair: mixed winding detected and fixed", test_mixed_winding_is_detectable_and_fixable, True),
+    ("damping: opposes motion, zero at rest", test_damping_opposes_motion_and_vanishes_at_rest, True),
+    ("damping: quadratic at speed", test_damping_is_quadratic_at_speed, True),
+    ("composite: sums its models", test_composite_sums_its_models, True),
+    ("damping: stops the energy pump", test_damping_stops_the_energy_pump, True),
 ]
 
 

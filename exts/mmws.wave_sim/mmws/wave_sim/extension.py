@@ -138,10 +138,20 @@ class MultiModalWaveSimExtension(_ExtBase):
             bridge = VesselBridge(omni.usd.get_context().get_stage(), body_path, hull_path)
             bridge.bind()
             self.vessel = bridge
+            # Buoyancy alone is a spring with nothing to dissipate energy, and
+            # the water surface is moving, so an undamped hull bouncing on it
+            # gains energy every cycle and leaves. Damping is not optional.
+            extents = bridge.vertices.max(axis=0) - bridge.vertices.min(axis=0)
             self.force_model = FORCES.create(
-                "buoyancy_pressure",
-                vertices=bridge.vertices,
-                triangles=bridge.triangles,
+                "composite",
+                models=[
+                    FORCES.create(
+                        "buoyancy_pressure",
+                        vertices=bridge.vertices,
+                        triangles=bridge.triangles,
+                    ),
+                    FORCES.create("damping", extents=extents),
+                ],
             )
             lo = bridge.vertices.min(axis=0)
             hi = bridge.vertices.max(axis=0)
