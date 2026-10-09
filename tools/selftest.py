@@ -442,6 +442,78 @@ def test_pressure_moment_small_for_a_level_box():
     assert arm < 0.03 * 2.0, f"moment arm {arm * 1000:.1f} mm on a 2 m hull is too large"
 
 
+# --------------------------------------------------- usd conversion layer
+
+from mmws.wave_sim.integration import (                  # noqa: E402
+    body_state_from_usd, quat_to_wxyz, triangulate,
+)
+
+
+class _FakeGfQuat:
+    """Stands in for pxr.Gf.Quatd, which keeps the scalar part separate."""
+
+    def __init__(self, w, xyz):
+        self._w, self._i = w, xyz
+
+    def GetReal(self):
+        return self._w
+
+    def GetImaginary(self):
+        return self._i
+
+
+def test_quat_from_gf_object():
+    """Gf.Quatd splits w from (x,y,z). Reassembling it in the wrong order
+    still normalises and still rotates - just not the way you meant."""
+    q = quat_to_wxyz(_FakeGfQuat(0.7071, (0.0, 0.0, 0.7071)))
+    assert np.allclose(q, [0.7071, 0.0, 0.0, 0.7071]), f"got {q}"
+
+
+def test_quat_from_sequence():
+    assert np.allclose(quat_to_wxyz([1, 0, 0, 0]), [1, 0, 0, 0])
+    try:
+        quat_to_wxyz([1, 0, 0])
+    except ValueError:
+        return
+    raise AssertionError("a 3-element quaternion should be rejected")
+
+
+def test_triangulate_quads():
+    """A USD mesh may hold quads; the force model needs triangles."""
+    t = triangulate([4, 4], [0, 1, 2, 3, 4, 5, 6, 7])
+    assert t.shape == (4, 3), f"two quads should give four triangles, got {t.shape}"
+    assert np.array_equal(t[:2], [[0, 1, 2], [0, 2, 3]]), f"fan order wrong: {t[:2]}"
+
+
+def test_triangulate_rejects_mismatch():
+    try:
+        triangulate([4, 4], [0, 1, 2, 3])
+    except ValueError:
+        return
+    raise AssertionError("counts not matching the index list should be rejected")
+
+
+def test_body_state_converts_degrees_to_radians():
+    """USD reports angular velocity in DEGREES per second."""
+    b = body_state_from_usd([0, 0, 0], [1, 0, 0, 0], angular_velocity_deg=[0, 0, 180.0])
+    assert_close(float(b.angular_velocity[2]), math.pi, 1e-9, "180 deg/s in rad/s")
+
+
+def test_body_state_rotates_into_the_body_frame():
+    """USD velocities are world frame; BodyState is body frame."""
+    a = math.radians(90) / 2
+    yaw90 = [math.cos(a), 0.0, 0.0, math.sin(a)]
+    b = body_state_from_usd([0, 0, 0], yaw90, linear_velocity=[1.0, 0.0, 0.0])
+    assert np.allclose(b.linear_velocity, [0.0, -1.0, 0.0], atol=1e-9), \
+        f"world +x under 90 deg yaw should be body -y, got {b.linear_velocity}"
+
+
+def test_body_state_identity_is_a_passthrough():
+    b = body_state_from_usd([1, 2, 3], [1, 0, 0, 0], linear_velocity=[4, 5, 6], mass=28.0)
+    assert np.allclose(b.position, [1, 2, 3]) and np.allclose(b.linear_velocity, [4, 5, 6])
+    assert b.mass == 28.0
+
+
 # ------------------------------------------------------------------------- main
 
 TESTS = [
@@ -490,6 +562,13 @@ TESTS = [
     ("ECKV: omega and k integrals agree", test_eckv_frequency_and_wavenumber_agree, True),
     ("ECKV: Hs grows with wind", test_eckv_grows_with_wind, True),
     ("ECKV: S(0) finite and zero", test_eckv_zero_frequency_is_finite, True),
+    ("usd: quaternion from a Gf object", test_quat_from_gf_object, True),
+    ("usd: quaternion from a sequence", test_quat_from_sequence, True),
+    ("usd: triangulate quads", test_triangulate_quads, True),
+    ("usd: triangulate rejects a mismatch", test_triangulate_rejects_mismatch, True),
+    ("usd: degrees become radians", test_body_state_converts_degrees_to_radians, True),
+    ("usd: velocities rotate into the body frame", test_body_state_rotates_into_the_body_frame, True),
+    ("usd: identity orientation passes through", test_body_state_identity_is_a_passthrough, True),
 ]
 
 
