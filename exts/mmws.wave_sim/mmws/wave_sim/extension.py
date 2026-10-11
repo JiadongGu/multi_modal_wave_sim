@@ -315,12 +315,25 @@ class MultiModalWaveSimExtension(_ExtBase):
                         accel = (vz - prev) / dt + 9.80665
                         implied = prev_f / accel if abs(accel) > 1e-6 else float("inf")
                     self._prev_vz, self._prev_fz = vz, float(f[2])
+                    # How far the hull has tipped from upright. R[2][2] of a
+                    # unit quaternion (w, x, y, z) is 1 - 2(x^2 + y^2), which
+                    # is the world-z component of the body's own z axis - and
+                    # it reads the same whichever row/column convention the
+                    # rotation matrix uses, so there is nothing to get wrong.
+                    #
+                    # Worth its own column: every force in this log is in the
+                    # BODY frame, so a big Fx on flat water does not mean a
+                    # sideways force, it means the hull is lying over. Without
+                    # this number that reads as a bug in the force model.
+                    q = _np.asarray(state.orientation, dtype=float)
+                    tilt = _np.degrees(_np.arccos(
+                        _np.clip(1.0 - 2.0 * (q[1] ** 2 + q[2] ** 2), -1.0, 1.0)))
                     self._log(
                         f"  z={pz:+8.3f} vz={vz:+7.2f}  water={wz:+6.3f} "
                         f"depth={wz - pz:+7.3f}  F=({f[0]:+7.0f},{f[1]:+7.0f},"
                         f"{f[2]:+8.0f})  dv={(vz - prev) if prev is not None else 0.0:+6.3f}"
                         f" exp={(float(f[2]) / max(state.mass, 1e-9) - 9.80665) * dt:+6.3f}"
-                        f" m_imp={implied:+.0f}",
+                        f" m_imp={implied:+.0f} tilt={tilt:5.1f}deg",
                         "warn",
                     )
             except Exception as exc:                  # noqa: BLE001
