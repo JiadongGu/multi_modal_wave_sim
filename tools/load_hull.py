@@ -3,10 +3,16 @@
 Run in Isaac Sim's Script Editor with the timeline STOPPED:
 
     HULL = "/home/asv/Downloads/BlueBoat_hulls_only.usdc"
-    MASS = 20.0
     exec(open("/home/asv/dev/multi_modal_wave_sim/tools/load_hull.py").read())
 
-Set HULL and MASS before the exec, or edit the defaults below.
+With no mass it prints a mass-to-draft table and stops, because a hull file
+carries geometry and nothing else. Supply one of:
+
+    MASS  = 23.5     kilograms, if you know it
+    DRAFT = 0.08     metres, and the mass that floats it there is solved for
+
+A UsdPhysics.MassAPI authored on the source file is used ahead of either, and
+the report names where the number came from.
 
 Why this exists
 ---------------
@@ -44,7 +50,13 @@ from pxr import Gf, Usd, UsdGeom, UsdPhysics, Vt
 
 VESSEL = "/World/Vessel"
 HULL = globals().get("HULL", "/home/asv/Downloads/BlueBoat_hulls_only.usdc")
-MASS = float(globals().get("MASS", 20.0))
+# No default, deliberately. A hull file carries geometry, not mass, and a mass
+# invented to make the script run is an input nobody chose that every later
+# number depends on: the draft, the waterplane area, GM, the roll period, and
+# therefore whether the hull looks stable. Set MASS, or set DRAFT and let the
+# script solve for the mass that floats the hull there.
+MASS = globals().get("MASS", None)
+DRAFT = globals().get("DRAFT", None)
 COM_OFFSET = np.array(globals().get("COM_OFFSET", (0.0, 0.0, 0.0)), dtype=float)
 RHO = 1000.0
 GRAVITY = 9.80665
@@ -98,6 +110,18 @@ for prim in src.Traverse():
 if not parts:
     raise RuntimeError(f"no UsdGeom.Mesh found anywhere in {HULL}")
 
+# If whoever authored the file put a mass on it, that beats anything typed at
+# the prompt, and the report says where it came from.
+mass_source = "you"
+if MASS is None:
+    for prim in src.Traverse():
+        api = UsdPhysics.MassAPI.Get(src, prim.GetPath())
+        if api:
+            value = api.GetMassAttr().Get()
+            if value is not None and value > 0.0:
+                MASS, mass_source = float(value), f"{prim.GetPath()} in the hull file"
+                break
+
 vertices, triangles, report = repair(parts)
 volume = float(report["volume"])
 open_count = int(report["open_edges_after"])
@@ -108,9 +132,6 @@ print(f"  open edges   {report['open_edges_before']} before welding -> {open_cou
 print(f"  volume       {volume:.5f} m^3   (displaces {volume * RHO:.1f} kg fully submerged)")
 if open_count:
     raise RuntimeError("hull is not watertight; pressure integration needs a closed surface")
-if MASS >= volume * RHO:
-    raise RuntimeError(
-        f"mass {MASS:.1f} kg exceeds full displacement {volume * RHO:.1f} kg - it will sink")
 
 # --- re-centre on the volume centroid ---------------------------------------
 # Every moment in the force model is taken about the centre of mass, so the
@@ -129,28 +150,65 @@ lo, hi = vertices.min(axis=0), vertices.max(axis=0)
 extents = hi - lo
 print(f"  extents      {extents.round(3)} m")
 
-# --- solve for the equilibrium draft ----------------------------------------
+# --- resolve the mass -------------------------------------------------------
 field = FIELDS.create("flat")
 model = FORCES.create("buoyancy_pressure", vertices=vertices, triangles=triangles)
-weight = MASS * GRAVITY
 
 
-def lift(z):
-    """Upward buoyancy, in newtons, with the body centre at height z."""
-    state = BodyState(position=np.array([0.0, 0.0, float(z)]), mass=MASS)
+def lift_at(z):
+    """Upward buoyancy, in newtons, with the body centre at height z.
+
+    Independent of mass - buoyancy is a property of the displaced water, so
+    the BodyState mass here is a placeholder the model never reads.
+    """
+    state = BodyState(position=np.array([0.0, 0.0, float(z)]), mass=1.0)
     return float(model.wrench(state, field, 0.0).force[2])
 
 
-# Buoyancy falls monotonically as the hull rises, so bisection cannot miss.
-# Bracket: fully under (lift = rho*g*V > weight) to fully clear (lift = 0).
-lo_z, hi_z = float(lo[2]) - 1.0, float(hi[2]) + 1.0
-for _ in range(80):
-    mid = 0.5 * (lo_z + hi_z)
-    if lift(mid) > weight:
-        lo_z = mid        # too much lift: let it rise
-    else:
-        hi_z = mid
-z_eq = 0.5 * (lo_z + hi_z)
+def settle(mass):
+    """Height of the body centre at which buoyancy balances this weight.
+
+    Buoyancy falls monotonically as the hull rises, so bisection cannot miss.
+    Bracket: fully under (lift = rho*g*V) to fully clear (lift = 0).
+    """
+    weight = mass * GRAVITY
+    a_z, b_z = float(lo[2]) - 1.0, float(hi[2]) + 1.0
+    for _ in range(80):
+        mid = 0.5 * (a_z + b_z)
+        a_z, b_z = (mid, b_z) if lift_at(mid) > weight else (a_z, mid)
+    return 0.5 * (a_z + b_z)
+
+
+if MASS is None and DRAFT is not None:
+    # The mass that floats the hull at the draft you asked for is just the
+    # buoyancy with the keel that far under, divided by g. No iteration.
+    MASS = lift_at(-(float(DRAFT) + float(lo[2]))) / GRAVITY
+    mass_source = f"solved from DRAFT = {float(DRAFT):.3f} m"
+
+if MASS is None:
+    print()
+    print("  No mass. This file carries geometry only, and a mass invented here")
+    print("  would silently set the draft, the GM and the roll period.")
+    print()
+    print("  Pick one:")
+    print("    MASS  = <kg>     if you know it")
+    print("    DRAFT = <m>      and the mass that floats it there is solved for")
+    print()
+    print("  mass -> draft for this hull, to check against a photo or a spec:")
+    print("      mass (kg)   draft (m)   submerged")
+    for frac in (0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5):
+        m = frac * volume * RHO
+        print(f"      {m:8.1f}   {-(settle(m) + float(lo[2])):9.4f}   {100 * frac:5.0f}%")
+    print(f"      {volume * RHO:8.1f}   {float(hi[2] - lo[2]):9.4f}     100%  (awash)")
+    raise SystemExit("  set MASS or DRAFT and run again")
+
+MASS = float(MASS)
+if MASS >= volume * RHO:
+    raise RuntimeError(
+        f"mass {MASS:.1f} kg exceeds full displacement {volume * RHO:.1f} kg - it will sink")
+print(f"  mass         {MASS:.2f} kg   (from: {mass_source})")
+
+z_eq = settle(MASS)
 
 # Draft is measured DOWN from the waterline to the keel. The keel sits at
 # world height z_eq + lo[2], and the flat water is at z = 0, so the depth of
@@ -160,7 +218,7 @@ draft = -(z_eq + float(lo[2]))
 displaced = MASS / RHO
 # Waterplane area is dV/dz, which is d(lift)/dz / (rho*g). Central difference.
 h = 1e-4
-waterplane = (lift(z_eq - h) - lift(z_eq + h)) / (2 * h) / (RHO * GRAVITY)
+waterplane = (lift_at(z_eq - h) - lift_at(z_eq + h)) / (2 * h) / (RHO * GRAVITY)
 
 # --- GM, straight out of the force model ------------------------------------
 # Heel the hull a small angle and read the restoring moment. Moments in the
