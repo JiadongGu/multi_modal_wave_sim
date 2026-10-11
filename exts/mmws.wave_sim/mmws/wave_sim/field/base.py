@@ -149,17 +149,43 @@ class WaveField(ABC):
     def write_mesh(self, stage=None, prim_path: str = "/World/Water"):
         if stage is None:
             return None
-        from pxr import UsdGeom, Vt #IGNORE THIS FLAG, PXR IS INSTALLED IN ISAACSIM
+        from pxr import Gf, UsdGeom, Vt #IGNORE THIS FLAG, PXR IS INSTALLED IN ISAACSIM
 
         mesh = UsdGeom.Mesh.Get(stage,prim_path) #fetch mesh if it exists
         if not mesh:
             mesh = UsdGeom.Mesh.Define(stage,prim_path)
-            counts, indices = self.mesh_topology() #creates prim, topology attributes get set
+            mesh.CreatePointsAttr()
+            # Quads, not a subdivision cage. Left unauthored, subdivisionScheme
+            # resolves to catmullClark and the renderer smooths a surface you
+            # computed exactly.
+            mesh.CreateSubdivisionSchemeAttr().Set("none")
+            mesh.CreateDoubleSidedAttr().Set(True)
+
+        pts=self.mesh_points().astype(np.float32) #USD points are Vec3f, so convert from float64 down to float32
+
+        # Rewrite the topology whenever the point count no longer matches it.
+        #
+        # This used to run only when the prim was created, which silently broke
+        # every field swap: /World/Water outlives the field that made it, so a
+        # 64-resolution fft tile left behind indices with a row stride of 64,
+        # and the next field wrote 128*128 points into them. The indices still
+        # address valid points, so nothing errors - each row of quads just
+        # shears one step sideways as it advances and the surface renders as
+        # diagonal stripes.
+        existing = mesh.GetPointsAttr().Get()
+        if existing is None or len(existing) != len(pts):
+            counts, indices = self.mesh_topology()
             mesh.CreateFaceVertexCountsAttr(Vt.IntArray.FromNumpy(counts))
             mesh.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(indices))
-            mesh.CreatePointsAttr()
-        pts=self.mesh_points().astype(np.float32) #USD points are Vec3f, so convert from float64 down to float32
+
         mesh.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(pts))
+        # Hydra culls against the extent. A stale one hides parts of the
+        # surface, which looks like another meshing bug.
+        lo, hi = pts.min(axis=0), pts.max(axis=0)
+        mesh.CreateExtentAttr().Set(Vt.Vec3fArray([
+            Gf.Vec3f(*(float(v) for v in lo)),
+            Gf.Vec3f(*(float(v) for v in hi)),
+        ]))
         return mesh
 
     
