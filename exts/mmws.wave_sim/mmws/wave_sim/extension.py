@@ -116,6 +116,9 @@ class MultiModalWaveSimExtension(_ExtBase):
         self.spectrum = None
         self.field = None
         self.force_model = None
+        # How the current field was built, so a spectrum swap can rebuild it.
+        self._field_name = None
+        self._field_kwargs = {}
 
         # Bound on Play, not here: the hull comes off the stage, so the force
         # model cannot be built until a prim actually exists to read it from.
@@ -174,18 +177,40 @@ class MultiModalWaveSimExtension(_ExtBase):
     ) -> None:
         """Swap any of the three components by registry name.
 
-        Each is independent, so `select(spectrum="jonswap")` leaves the field
-        and force model alone. This is the method a UI dropdown, a ROS 2
-        service or a test harness should call.
+        The force model is independent of the other two. The field is NOT
+        independent of the spectrum: a spectral field samples the spectrum
+        once, at construction, and never consults it again - FftWaveField
+        bakes h0 in _build() - so swapping the spectrum alone would leave the
+        water exactly as it was. That failed silently and looked like the
+        swap had worked, with only the wave statistics to give it away. So a
+        spectrum change rebuilds the current field on the same settings.
+
+        This is the method a UI dropdown, a ROS 2 service or a test harness
+        should call.
         """
+        rebuild = False
         if spectrum is not None:
             self.spectrum = SPECTRA.create(spectrum, **(spectrum_kwargs or {}))
             self._log(f"spectrum  -> {self.spectrum!r}", BANNER_LEVEL)
-        if field is not None:
+            rebuild = field is None and self._field_name is not None
+
+        if field is not None or rebuild:
+            name = field if field is not None else self._field_name
+            kwargs = field_kwargs if field is not None else self._field_kwargs
+            self._field_name, self._field_kwargs = name, dict(kwargs or {})
             self.field = FIELDS.create(
-                field, spectrum=self.spectrum, **(field_kwargs or {})
+                name, spectrum=self.spectrum, **self._field_kwargs
             )
-            self._log(f"field     -> {self.field!r}", BANNER_LEVEL)
+            # Keep the clock. A rebuilt field starts at t = 0, and a surface
+            # that jumps backwards under a floating hull is a step change in
+            # depth that the force model will answer with a step change in
+            # force.
+            self.field.advance(self._sim_time)
+            self._log(
+                f"field     -> {self.field!r}"
+                + ("   (rebuilt for the new spectrum)" if rebuild else ""),
+                BANNER_LEVEL,
+            )
         if force_model is not None:
             self.force_model = FORCES.create(force_model)
             self._log(f"forces    -> {self.force_model!r}", BANNER_LEVEL)
