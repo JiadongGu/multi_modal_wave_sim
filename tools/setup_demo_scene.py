@@ -16,6 +16,11 @@ may not honour MassAPI at all - which shows up as a hull accelerating as if it
 weighed a fraction of what you set. Nothing else in this scene has a collider,
 so there is nothing for it to hit.
 
+Everything else under /World that carries a rigid body or a collider is
+deleted first. A second dynamic body in the scene is not a second experiment,
+it is a contaminant: it falls, it collides, and its impulses arrive in our
+trace looking like forces we applied.
+
 Stop the timeline before running this - while it is playing, PhysX owns the
 transform and anything set here is overwritten immediately.
 """
@@ -25,14 +30,31 @@ import omni.usd
 from pxr import Gf, Usd, UsdGeom, UsdPhysics, Vt
 
 VESSEL = "/World/Vessel"
+WATER = "/World/Water"
 MASS = 200.0
 POSITION = (150.0, 150.0, 3.0)
+SIZE = (1.0, 1.0, 1.0)
 
 stage = omni.usd.get_context().get_stage()
 
 if not stage.GetPrimAtPath("/World"):
     UsdGeom.Xform.Define(stage, "/World")
     stage.SetDefaultPrim(stage.GetPrimAtPath("/World"))
+
+# --- clear out every other physics-active prim -------------------------------
+# Not just /World/Vessel. Anything with a rigid body falls; anything with a
+# collider can be depenetrated against. Either one injects impulses that look
+# exactly like a bug in the force model.
+doomed = []
+for prim in stage.Traverse():
+    path = str(prim.GetPath())
+    if path in (VESSEL, WATER) or not path.startswith("/World/"):
+        continue
+    if prim.HasAPI(UsdPhysics.RigidBodyAPI) or prim.HasAPI(UsdPhysics.CollisionAPI):
+        doomed.append(path)
+for path in doomed:
+    stage.RemovePrim(path)
+    print(f"removed {path} (stray rigid body or collider)")
 
 if not stage.GetPrimAtPath("/World/PhysicsScene"):
     UsdPhysics.Scene.Define(stage, "/World/PhysicsScene")
@@ -51,7 +73,7 @@ if str(pkg) not in sys.path:
     sys.path.insert(0, str(pkg))
 from mmws.wave_sim.forces import box_hull
 
-vertices, triangles = box_hull(1.0, 1.0, 1.0)
+vertices, triangles = box_hull(*SIZE)
 
 mesh = UsdGeom.Mesh.Define(stage, VESSEL)
 mesh.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(vertices.astype(np.float32)))
@@ -69,11 +91,48 @@ mesh.CreateExtentAttr(Vt.Vec3fArray([
 prim = mesh.GetPrim()
 UsdPhysics.RigidBodyAPI.Apply(prim)
 UsdPhysics.CollisionAPI.Apply(prim)
-UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(MASS)
+
+mass_api = UsdPhysics.MassAPI.Apply(prim)
+mass_api.CreateMassAttr(MASS)
+# centerOfMass defaults to (-inf, -inf, -inf), the "work it out from the
+# geometry" sentinel. Reading it back and using it as a moment arm gives an
+# infinite lever and a NaN torque, so author it explicitly.
+mass_api.CreateCenterOfMassAttr(Gf.Vec3f(0.0, 0.0, 0.0))
+# Solid box about its centre: I = m/12 * (a^2 + b^2) per axis.
+sx, sy, sz = SIZE
+mass_api.CreateDiagonalInertiaAttr(Gf.Vec3f(
+    float(MASS / 12.0 * (sy * sy + sz * sz)),
+    float(MASS / 12.0 * (sx * sx + sz * sz)),
+    float(MASS / 12.0 * (sx * sx + sy * sy)),
+))
+mass_api.CreatePrincipalAxesAttr(Gf.Quatf(1.0, 0.0, 0.0, 0.0))
 
 xf = UsdGeom.Xformable(prim)
 xf.ClearXformOpOrder()
 xf.AddTranslateOp().Set(Gf.Vec3d(*POSITION))
+
+# --- cap what PhysX is allowed to do on its own ------------------------------
+# maxDepenetrationVelocity is the speed limit on penetration recovery. Left
+# unbounded, an overlap of a few centimetres is resolved in one 60 Hz step at
+# tens of metres per second - which arrives in the trace as a huge dv on a step
+# where our applied force was zero. A floating hull never needs to be pushed
+# out of anything faster than 1 m/s. maxLinearVelocity then makes any remaining
+# runaway visible as a clamp rather than as a disappearing cube.
+try:
+    from pxr import PhysxSchema
+
+    rb = PhysxSchema.PhysxRigidBodyAPI.Apply(prim)
+    rb.CreateMaxDepenetrationVelocityAttr(1.0)
+    rb.CreateMaxLinearVelocityAttr(20.0)
+    rb.CreateMaxAngularVelocityAttr(180.0)  # deg/s
+    print("  applied PhysxRigidBodyAPI velocity caps")
+
+    scene_prim = stage.GetPrimAtPath("/World/PhysicsScene")
+    sc = PhysxSchema.PhysxSceneAPI.Apply(scene_prim)
+    sc.CreateMaxBiasCoefficientAttr(0.8)
+    print("  set scene maxBiasCoefficient = 0.8 (was unbounded)")
+except ImportError:
+    print("  PhysxSchema unavailable - velocity caps NOT applied")
 
 print()
 print(f"  {VESSEL}")
@@ -81,7 +140,12 @@ print(f"    mesh          {prim.IsA(UsdGeom.Mesh)}  ({len(vertices)} verts, {len
 print(f"    rigid body    {prim.HasAPI(UsdPhysics.RigidBodyAPI)}")
 print(f"    collider      {prim.HasAPI(UsdPhysics.CollisionAPI)}  (for mass properties)")
 print(f"    mass          {UsdPhysics.MassAPI(prim).GetMassAttr().Get()} kg")
+print(f"    centre of mass {UsdPhysics.MassAPI(prim).GetCenterOfMassAttr().Get()}")
+print(f"    inertia       {UsdPhysics.MassAPI(prim).GetDiagonalInertiaAttr().Get()}")
 print(f"    position      {POSITION}")
 print()
+others = [str(p.GetPath()) for p in stage.Traverse()
+          if p.HasAPI(UsdPhysics.RigidBodyAPI) and str(p.GetPath()) != VESSEL]
+print(f"  other rigid bodies in the scene: {others or 'none'}")
 print(f"  expected draft  {MASS / 1000.0:.3f} m   (mass / rho / waterplane area)")
 print("  press Play")
