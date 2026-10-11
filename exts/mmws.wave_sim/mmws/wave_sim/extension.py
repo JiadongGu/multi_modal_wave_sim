@@ -35,10 +35,30 @@ DIAGNOSTIC = True
 TRACE_STEPS = 400
 
 
+# The live extension object, for the Script Editor and for tools/.
+#
+# Kit constructs the extension itself and hands the instance to nobody, so
+# without this there is no supported way to reach the running object from a
+# script. Set on startup, cleared on shutdown, so a stale handle after a
+# disable/enable cycle is impossible.
+_INSTANCE = None
+
+
+def get():
+    """The running extension, or None if it is not enabled.
+
+        import mmws.wave_sim.extension as E
+        E.get().select(field="flat")
+    """
+    return _INSTANCE
+
+
 class MultiModalWaveSimExtension(_ExtBase):
     """Lifecycle owner. Holds the current selection and the event handles."""
 
     def on_startup(self, ext_id: str) -> None:
+        global _INSTANCE
+        _INSTANCE = self
         self._ext_id = ext_id
         self._step_count = 0
         self._sim_time = 0.0
@@ -83,6 +103,9 @@ class MultiModalWaveSimExtension(_ExtBase):
         self._log("ready", BANNER_LEVEL)
 
     def on_shutdown(self) -> None:
+        global _INSTANCE
+        if _INSTANCE is self:
+            _INSTANCE = None
         # Unsubscribe before dropping anything else: a callback firing into a
         # half-torn-down extension is how Isaac Sim crashes on reload, and
         # Python extensions reload often during development.
