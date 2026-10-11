@@ -29,6 +29,11 @@ BANNER_LEVEL = "warn"
 # Per-step vessel diagnostics. Set False once the force path is trusted.
 DIAGNOSTIC = True
 
+# Log EVERY step for this many steps after Play, regardless of what the hull
+# is doing. Conditional logging kept missing the window where things go wrong:
+# whatever happens between two sampled lines is exactly what you need to see.
+TRACE_STEPS = 400
+
 
 class MultiModalWaveSimExtension(_ExtBase):
     """Lifecycle owner. Holds the current selection and the event handles."""
@@ -267,11 +272,8 @@ class MultiModalWaveSimExtension(_ExtBase):
                 # crosses the surface in a few milliseconds.
                 import numpy as _np
 
-                wet = bool(_np.any(_np.abs(wrench.force) > 1e-6))
-                if wet:
-                    self._wet_steps = getattr(self, "_wet_steps", 0) + 1
-                if DIAGNOSTIC and ((wet and self._wet_steps <= 60)
-                                   or self._step_count % 30 == 0):
+                if DIAGNOSTIC and (self._step_count <= TRACE_STEPS
+                                   or self._step_count % 60 == 0):
                     px, py, pz = (float(v) for v in state.position)
                     wz = float(_np.asarray(self.field.height(
                         _np.array([px]), _np.array([py])))[0])
@@ -292,8 +294,9 @@ class MultiModalWaveSimExtension(_ExtBase):
                     self._log(
                         f"  z={pz:+8.3f} vz={vz:+7.2f}  water={wz:+6.3f} "
                         f"depth={wz - pz:+7.3f}  F=({f[0]:+7.0f},{f[1]:+7.0f},"
-                        f"{f[2]:+8.0f})  m_set={state.mass:.0f} m_implied="
-                        f"{implied:+.1f}",
+                        f"{f[2]:+8.0f})  dv={(vz - prev) if prev is not None else 0.0:+6.3f}"
+                        f" exp={(float(f[2]) / max(state.mass, 1e-9) - 9.80665) * dt:+6.3f}"
+                        f" m_imp={implied:+.0f}",
                         "warn",
                     )
             except Exception as exc:                  # noqa: BLE001
