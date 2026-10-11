@@ -67,9 +67,15 @@ z_eq = half_height - draft
 # Place it exactly on its waterline, upright, at rest. Clearing the op order
 # first also clears any rotation left over from a previous run - a hull that
 # starts 2 degrees over will keep going over, and the run tells you nothing.
+# The water mesh spans [0, tile_size) in x and y, so a hull parked outside
+# that square floats next to the water rather than on it. The physics does not
+# care - height() is defined everywhere - but you cannot see what you are
+# debugging. Centre it on whatever tile the current field uses.
+centre = ext.field.tile_size / 2.0
+
 xf = UsdGeom.Xformable(prim)
 xf.ClearXformOpOrder()
-xf.AddTranslateOp().Set(Gf.Vec3d(150.0, 150.0, float(z_eq)))
+xf.AddTranslateOp().Set(Gf.Vec3d(float(centre), float(centre), float(z_eq)))
 xf.AddOrientOp().Set(Gf.Quatf(1.0, 0.0, 0.0, 0.0))
 
 rb = UsdPhysics.RigidBodyAPI(prim)
@@ -86,7 +92,8 @@ print(f"    field            {ext.field!r}")
 print(f"    mass             {mass:.1f} kg")
 print(f"    waterplane       {area:.3f} m^2")
 print(f"    expected draft   {draft:.3f} m")
-print(f"    placed at z      {z_eq:+.3f} m, upright, at rest")
+print(f"    placed at        ({centre:.1f}, {centre:.1f}, {z_eq:+.3f}) m, upright, at rest")
+print(f"    water patch      0 .. {ext.field.tile_size:.0f} m square")
 print(f"    expected depth   {-z_eq:+.3f}   (the logged column)")
 print()
 print(f"    GM               {gm:+.3f} m", end="")

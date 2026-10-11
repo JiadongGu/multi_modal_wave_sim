@@ -32,7 +32,9 @@ from pxr import Gf, Usd, UsdGeom, UsdPhysics, Vt
 VESSEL = "/World/Vessel"
 WATER = "/World/Water"
 MASS = 200.0
-POSITION = (150.0, 150.0, 3.0)
+# x, y must land inside the water patch, which spans [0, tile_size) - see
+# field/base.py mesh_points(). 64 is the centre of the 128 m default tile.
+POSITION = (64.0, 64.0, 3.0)
 SIZE = (1.0, 1.0, 1.0)
 
 stage = omni.usd.get_context().get_stage()

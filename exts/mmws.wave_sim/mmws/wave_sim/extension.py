@@ -35,6 +35,48 @@ DIAGNOSTIC = True
 TRACE_STEPS = 400
 
 
+# How far ahead of the measured state to evaluate the force, in timesteps.
+#
+# The force we write is not applied to the state we read it from. Reading at
+# step n, PhysX applies that force during step n+1 - the trace shows it
+# plainly, with every dv matching the PREVIOUS line's exp. A restoring force
+# that arrives a step late does not just blur the answer, it ADDS energy:
+# released at rest on flat water the hull's oscillation grew about 25% per
+# cycle until quadratic drag capped it at a limit cycle.
+#
+# Evaluating at x + v * lead * dt cancels it. 1.0 step for the transport
+# delay, 0.5 more to centre the force on the step it acts over. For a
+# hydrostatic spring of stiffness k this is algebraically a linear damper of
+# k * lead * dt N per m/s, which for this hull is about 245 - so if the hull
+# now LOSES energy too fast, this number is why.
+FORCE_LEAD_STEPS = 1.5
+
+
+def _lead(state, dt):
+    """state, with position extrapolated FORCE_LEAD_STEPS into the future.
+
+    linear_velocity is body-frame (see convert.body_state_from_usd), and the
+    position is world-frame, so the velocity has to be rotated back out before
+    it can be added to it. R maps body -> world; R.T is the world -> body used
+    when the state was built.
+    """
+    from dataclasses import replace
+
+    import numpy as _np
+
+    from .forces import quat_to_matrix
+
+    if dt <= 0.0 or FORCE_LEAD_STEPS == 0.0:
+        return state
+    R = quat_to_matrix(_np.asarray(state.orientation, dtype=float))
+    v_world = R @ _np.asarray(state.linear_velocity, dtype=float)
+    return replace(
+        state,
+        position=_np.asarray(state.position, dtype=float)
+        + v_world * (FORCE_LEAD_STEPS * dt),
+    )
+
+
 # The live extension object, for the Script Editor and for tools/.
 #
 # Kit constructs the extension itself and hands the instance to nobody, so
@@ -284,7 +326,10 @@ class MultiModalWaveSimExtension(_ExtBase):
         if self.vessel is not None and self.force_model is not None and self.field is not None:
             try:
                 state = self.vessel.read_state()
-                wrench = self.force_model.wrench(state, self.field, self._sim_time)
+                wrench = self.force_model.wrench(
+                    _lead(state, dt), self.field,
+                    self._sim_time + FORCE_LEAD_STEPS * dt,
+                )
                 self.vessel.apply(wrench)
 
                 # Diagnostic, roughly twice a second. Three questions at once:
