@@ -27,7 +27,7 @@ from .registry import FIELDS, FORCES, SPECTRA
 BANNER_LEVEL = "warn"
 
 # Per-step vessel diagnostics. Set False once the force path is trusted.
-DIAGNOSTIC = True
+DIAGNOSTIC = False
 
 # Log EVERY step for this many steps after Play, regardless of what the hull
 # is doing. Conditional logging kept missing the window where things go wrong:
