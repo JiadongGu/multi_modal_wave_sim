@@ -120,8 +120,17 @@ class VesselBridge:
         self._force_api = PhysxSchema.PhysxForceAPI.Apply(body)
         self._force_api.CreateWorldFrameEnabledAttr(False)
         self._force_api.CreateForceEnabledAttr(True)
+        # physxForce:mode decides whether the numbers below are newtons or
+        # metres per second squared. Left unauthored it can resolve to
+        # "acceleration", and then mass never enters the integration at all:
+        # a 5 kN buoyancy force becomes 5000 m/s^2 and the hull leaves at
+        # F*dt instead of F*dt/m - a factor of m, silently. Author it.
+        self._force_api.CreateModeAttr("force")
         self._force_api.CreateForceAttr(Gf.Vec3f(0.0, 0.0, 0.0))
         self._force_api.CreateTorqueAttr(Gf.Vec3f(0.0, 0.0, 0.0))
+        # Read it back rather than trusting the write. The banner reports it,
+        # because "newtons or m/s^2" is not something to assume twice.
+        self.force_mode = self._force_api.GetModeAttr().Get()
 
     def read_state(self) -> BodyState:
         from pxr import Usd, UsdGeom

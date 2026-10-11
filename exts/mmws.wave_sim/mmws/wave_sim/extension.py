@@ -162,7 +162,8 @@ class MultiModalWaveSimExtension(_ExtBase):
             hi = bridge.vertices.max(axis=0)
             self._log(
                 f"vessel    -> {body_path}  ({len(bridge.vertices)} verts, "
-                f"{len(bridge.triangles)} tris, mass {bridge.mass:.1f} kg)",
+                f"{len(bridge.triangles)} tris, mass {bridge.mass:.1f} kg, "
+                f"force mode {getattr(bridge, 'force_mode', '?')})",
                 BANNER_LEVEL,
             )
             self._log(
