@@ -326,6 +326,11 @@ class MultiModalWaveSimExtension(_ExtBase):
         if self.vessel is not None and self.force_model is not None and self.field is not None:
             try:
                 state = self.vessel.read_state()
+                # Kept for the heartbeat below, which has to say where the
+                # hull is even when the per-step trace is off. Holding the
+                # reference costs nothing; the heartbeat does the arithmetic
+                # once a second.
+                self._last_state = state
                 wrench = self.force_model.wrench(
                     _lead(state, dt), self.field,
                     self._sim_time + FORCE_LEAD_STEPS * dt,
@@ -386,13 +391,32 @@ class MultiModalWaveSimExtension(_ExtBase):
                 self._log(f"force step failed, detaching ({exc})", "error")
                 self.vessel = None
 
-        # Proof of life without flooding the console: roughly once a second at
-        # a 60 Hz step. Delete once there is real work here.
+        # One line a second, and it says where the hull is.
+        #
+        # This used to print only a step counter, and to drop to "info" - which
+        # carb hides - after step 300. With DIAGNOSTIC off that left the sim
+        # completely silent after five seconds, which is exactly when a hull
+        # that is going to misbehave has got round to it. The heartbeat is the
+        # floor of what you can see, so it carries the state: where the hull
+        # is, where the water is under it, and whether it is still upright.
         if self._step_count % 60 == 0:
-            self._log(
-                f"step {self._step_count}  t={self._sim_time:.2f}s  dt={dt * 1000:.2f}ms",
-                "warn" if self._step_count <= 300 else "info",
-            )
+            line = f"step {self._step_count}  t={self._sim_time:.2f}s  dt={dt * 1000:.2f}ms"
+            state = getattr(self, "_last_state", None)
+            if state is not None and self.field is not None:
+                try:
+                    import numpy as _np
+
+                    px, py, pz = (float(v) for v in state.position)
+                    wz = float(_np.asarray(self.field.height(
+                        _np.array([px]), _np.array([py])))[0])
+                    q = _np.asarray(state.orientation, dtype=float)
+                    tilt = _np.degrees(_np.arccos(_np.clip(
+                        1.0 - 2.0 * (q[1] ** 2 + q[2] ** 2), -1.0, 1.0)))
+                    line += (f"   hull z={pz:+7.3f} water={wz:+7.3f} "
+                             f"depth={wz - pz:+7.3f} tilt={tilt:5.1f}deg")
+                except Exception:                     # noqa: BLE001
+                    line += "   (state unavailable)"
+            self._log(line, BANNER_LEVEL)
 
     # -------------------------------------------------------------------- utils
 
