@@ -119,6 +119,10 @@ class MultiModalWaveSimExtension(_ExtBase):
         # How the current field was built, so a spectrum swap can rebuild it.
         self._field_name = None
         self._field_kwargs = {}
+        # Per-step CSV capture, off unless record() turns it on.
+        self._csv = None
+        self._csv_writer = None
+        self._csv_rows = 0
 
         # Bound on Play, not here: the hull comes off the stage, so the force
         # model cannot be built until a prim actually exists to read it from.
@@ -155,6 +159,8 @@ class MultiModalWaveSimExtension(_ExtBase):
         # half-torn-down extension is how Isaac Sim crashes on reload, and
         # Python extensions reload often during development.
         self._unsubscribe()
+        if getattr(self, "_csv", None) is not None:
+            self.record(None)
         self.spectrum = None
         self.field = None
         self.force_model = None
@@ -214,6 +220,69 @@ class MultiModalWaveSimExtension(_ExtBase):
         if force_model is not None:
             self.force_model = FORCES.create(force_model)
             self._log(f"forces    -> {self.force_model!r}", BANNER_LEVEL)
+
+    def record(self, path=None):
+        """Write one row per physics step to CSV, for frequency-domain work.
+
+            E.get().record("/tmp/heave.csv")    # start
+            E.get().record(None)                # stop and close
+
+        The heartbeat is once a second. Nyquist on a 1 Hz sample is 0.5 Hz, so
+        it cannot see anything with a period under 2 s - which is most of a
+        wave spectrum. This writes every step, 60 Hz, giving headroom to 30 Hz.
+
+        Columns are the hull and the water under it at the same instant, which
+        is what a transfer function needs: heave RAO is the ratio of the z
+        amplitude to the water amplitude at each frequency, so both have to be
+        sampled together or the phase is meaningless.
+
+        Stopping the timeline closes the file. So does calling record(None),
+        and so does shutdown - an unclosed file is a truncated file.
+        """
+        import csv
+
+        if self._csv is not None:
+            self._csv.flush()
+            self._csv.close()
+            self._log(f"recording closed: {self._csv.name} ({self._csv_rows} rows)",
+                      BANNER_LEVEL)
+            self._csv = self._csv_writer = None
+            self._csv_rows = 0
+        if path is None:
+            return
+
+        self._csv = open(path, "w", newline="")
+        self._csv_writer = csv.writer(self._csv)
+        self._csv_writer.writerow([
+            "step", "t", "x", "y", "z", "water", "depth", "tilt_deg",
+            "vx", "vy", "vz", "fx", "fy", "fz",
+        ])
+        self._csv_rows = 0
+        self._log(f"recording to {path} (one row per step)", BANNER_LEVEL)
+
+    def _record_row(self, state, wrench) -> None:
+        import numpy as _np
+
+        try:
+            x, y, z = (float(v) for v in state.position)
+            wz = float(_np.asarray(self.field.height(
+                _np.array([x]), _np.array([y])))[0])
+            q = _np.asarray(state.orientation, dtype=float)
+            tilt = _np.degrees(_np.arccos(_np.clip(
+                1.0 - 2.0 * (q[1] ** 2 + q[2] ** 2), -1.0, 1.0)))
+            v = _np.asarray(state.linear_velocity, dtype=float)
+            f = _np.asarray(wrench.force, dtype=float)
+            self._csv_writer.writerow([
+                self._step_count, f"{self._sim_time:.6f}",
+                f"{x:.6f}", f"{y:.6f}", f"{z:.6f}", f"{wz:.6f}",
+                f"{wz - z:.6f}", f"{tilt:.4f}",
+                f"{v[0]:.6f}", f"{v[1]:.6f}", f"{v[2]:.6f}",
+                f"{f[0]:.4f}", f"{f[1]:.4f}", f"{f[2]:.4f}",
+            ])
+            self._csv_rows += 1
+        except Exception as exc:                      # noqa: BLE001
+            self._log(f"recording failed, stopping ({exc})", "error")
+            self.record(None)
 
     # ------------------------------------------------------------------ vessel
 
@@ -318,6 +387,11 @@ class MultiModalWaveSimExtension(_ExtBase):
                 self._wet_steps = 0
                 self._prev_vz = None
                 self.vessel = None
+                # Close any recording. A file left open is a file with its
+                # last buffer unwritten, and the truncation lands at the end
+                # of the run - exactly where the interesting part is.
+                if self._csv is not None:
+                    self.record(None)
                 self._log("timeline stopped, counters reset", BANNER_LEVEL)
         except Exception:                             # noqa: BLE001
             pass
@@ -361,6 +435,9 @@ class MultiModalWaveSimExtension(_ExtBase):
                     self._sim_time + FORCE_LEAD_STEPS * dt,
                 )
                 self.vessel.apply(wrench)
+
+                if self._csv_writer is not None:
+                    self._record_row(state, wrench)
 
                 # Diagnostic, roughly twice a second. Three questions at once:
                 # is the pose updating, is the water height sane, is the force
