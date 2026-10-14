@@ -125,6 +125,11 @@ class MultiModalWaveSimExtension(_ExtBase):
         self.show_grid = False
         self._grid_stride = 8
         self._grid_drawn = False
+        # Per-face force arrows, off by default.
+        self.show_forces = False
+        self._forces_drawn = False
+        # Full run capture, off until capture() turns it on.
+        self._cap = None
         # Chase camera, off by default.
         self.follow = False
         self._cam_eye = None
@@ -175,6 +180,8 @@ class MultiModalWaveSimExtension(_ExtBase):
             self._panel = None
         if getattr(self, "_csv", None) is not None:
             self.record(None)
+        if getattr(self, "_cap", None) is not None:
+            self._write_capture()
         self.spectrum = None
         self.field = None
         self.force_model = None
@@ -248,6 +255,212 @@ class MultiModalWaveSimExtension(_ExtBase):
                 pass
             finally:
                 self._in_select = False
+
+    # ------------------------------------------------------------- diagnostics
+
+    def _face_model(self):
+        """The buoyancy model inside whatever composite is bound, or None."""
+        model = self.force_model
+        for candidate in ([model] + list(getattr(model, "models", []) or [])):
+            if hasattr(candidate, "record_faces"):
+                return candidate
+        return None
+
+    def _sync_face_capture(self) -> None:
+        """Turn the per-face capture on exactly when something needs it."""
+        model = self._face_model()
+        if model is not None:
+            model.record_faces = bool(getattr(self, "show_forces", False)
+                                      or getattr(self, "_cap", None) is not None)
+
+    def show_force_vectors(self, enable: bool = True) -> None:
+        """Draw the wetted triangles and their per-face forces."""
+        self.show_forces = bool(enable)
+        self._sync_face_capture()
+
+    def _draw_face_forces(self, stage) -> None:
+        """The wetted triangles, and one arrow per face along its force.
+
+        This is the force model's own intermediate state made visible: the
+        polygons are what `_clip` actually produced after cutting each
+        triangle at the waterline, and each line is -p*A*n for that piece. If
+        the hull is behaving oddly, the arrows show whether the integration is
+        wrong or the hull is simply somewhere unexpected.
+        """
+        import numpy as _np
+        from pxr import Sdf, UsdGeom, Vt
+
+        model = self._face_model()
+        wet = getattr(model, "last_wet", None) if model else None
+        vis = (UsdGeom.Tokens.inherited if self.show_forces and wet is not None
+               and len(wet) else UsdGeom.Tokens.invisible)
+
+        faces = UsdGeom.Mesh.Get(stage, "/World/Debug/WetFaces")
+        if not faces:
+            faces = UsdGeom.Mesh.Define(stage, "/World/Debug/WetFaces")
+            faces.CreateSubdivisionSchemeAttr().Set("none")
+            faces.CreateDoubleSidedAttr().Set(True)
+            UsdGeom.PrimvarsAPI(faces).CreatePrimvar(
+                "displayColor", Sdf.ValueTypeNames.Color3fArray,
+                UsdGeom.Tokens.constant).Set(Vt.Vec3fArray([(1.0, 0.55, 0.15)]))
+        arrows = UsdGeom.BasisCurves.Get(stage, "/World/Debug/ForceVectors")
+        if not arrows:
+            arrows = UsdGeom.BasisCurves.Define(stage, "/World/Debug/ForceVectors")
+            arrows.CreateTypeAttr().Set("linear")
+            arrows.CreateWidthsAttr().SetMetadata("interpolation", "constant")
+            UsdGeom.PrimvarsAPI(arrows).CreatePrimvar(
+                "displayColor", Sdf.ValueTypeNames.Color3fArray,
+                UsdGeom.Tokens.constant).Set(Vt.Vec3fArray([(0.25, 1.0, 0.45)]))
+
+        for prim in (faces, arrows):
+            UsdGeom.Imageable(prim).GetVisibilityAttr().Set(vis)
+        if vis == UsdGeom.Tokens.invisible:
+            return
+
+        pts = _np.asarray(wet, dtype=float).reshape(-1, 3)
+        faces.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(pts.astype(_np.float32)))
+        faces.CreateFaceVertexCountsAttr().Set(Vt.IntArray([3] * len(wet)))
+        faces.CreateFaceVertexIndicesAttr().Set(
+            Vt.IntArray.FromNumpy(_np.arange(len(wet) * 3, dtype=_np.int32)))
+
+        centroids = _np.asarray(model.last_centroids, dtype=float)
+        forces = _np.asarray(model.last_forces, dtype=float)
+        # Scaled so the biggest arrow is about a sixth of the hull, every
+        # frame. A fixed newtons-per-metre would be unreadable across a 200 kg
+        # cube and a 245 tonne ship, and unreadable again the moment a wave
+        # doubles the load.
+        span = float(_np.ptp(self.vessel.vertices[:, 0])) if self.vessel else 1.0
+        biggest = float(_np.linalg.norm(forces, axis=1).max()) if len(forces) else 0.0
+        scale = (span / 6.0) / biggest if biggest > 0.0 else 0.0
+        tips = centroids + forces * scale
+        line_pts = _np.empty((len(centroids) * 2, 3))
+        line_pts[0::2], line_pts[1::2] = centroids, tips
+        arrows.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(line_pts.astype(_np.float32)))
+        arrows.CreateCurveVertexCountsAttr().Set(Vt.IntArray([2] * len(centroids)))
+        arrows.GetWidthsAttr().Set(Vt.FloatArray([max(span * 0.004, 0.005)]))
+
+    # ---------------------------------------------------------- run recording
+
+    def capture(self, path="/tmp/mmws_run.npz", surface_every: int = 10,
+                faces_every: int = 1, limit_mb: float = 512.0):
+        """Record the whole run to one .npz, overwritten each time.
+
+        Pass None to stop and write. Stopping the timeline also writes it, so
+        a run that is simply stopped is not a run that is lost.
+
+            E.get().capture()            # start
+            E.get().capture(None)        # stop and write
+
+        Streams, and what they cost
+        ---------------------------
+        The hull's pose, velocity and total wrench are small - a few hundred
+        bytes a second - so they are kept every tick. The other two are not:
+
+          surface  128x128 floats is 65 kB a tick, 3.9 MB a second at 60 Hz
+          faces    one centroid and one force per wetted piece, which for the
+                   survey hull is a few thousand rows a tick
+
+        Hence `surface_every` and `faces_every`, in ticks. The surface evolves
+        on a wave period of seconds, so every 10th tick still oversamples it
+        by a wide margin.
+
+        Wetted faces come and go as the hull moves, so their count changes
+        every tick and they cannot be stacked into a rectangular array. They
+        are stored concatenated with a per-tick count, which you split with
+
+            np.split(face_forces, np.cumsum(face_counts)[:-1])
+        """
+        import numpy as _np
+
+        if self._cap is not None:
+            self._write_capture()
+        if path is None:
+            self._sync_face_capture()
+            return
+
+        self._cap = {
+            "path": str(path), "surface_every": max(1, int(surface_every)),
+            "faces_every": max(1, int(faces_every)),
+            "limit": float(limit_mb) * 1e6, "bytes": 0, "stopped": False,
+            "t": [], "pos": [], "quat": [], "lin_vel": [], "ang_vel": [],
+            "force": [], "moment": [],
+            "surface_t": [], "surface_z": [], "surface_dx": [], "surface_dy": [],
+            "face_t": [], "face_counts": [], "face_centroids": [], "face_forces": [],
+        }
+        self._sync_face_capture()
+        self._log(f"capturing this run to {path} (overwrites)", BANNER_LEVEL)
+
+    def _capture_row(self, state, wrench) -> None:
+        import numpy as _np
+
+        cap = self._cap
+        if cap["stopped"]:
+            return
+        cap["t"].append(self._sim_time)
+        cap["pos"].append(_np.asarray(state.position, dtype=_np.float32))
+        cap["quat"].append(_np.asarray(state.orientation, dtype=_np.float32))
+        cap["lin_vel"].append(_np.asarray(state.linear_velocity, dtype=_np.float32))
+        cap["ang_vel"].append(_np.asarray(state.angular_velocity, dtype=_np.float32))
+        cap["force"].append(_np.asarray(wrench.force, dtype=_np.float32))
+        cap["moment"].append(_np.asarray(wrench.moment, dtype=_np.float32))
+        cap["bytes"] += 22 * 4
+
+        if self._step_count % cap["surface_every"] == 0 and self.field is not None:
+            z = getattr(self.field, "_z", None)
+            if z is not None:
+                cap["surface_t"].append(self._sim_time)
+                cap["surface_z"].append(_np.asarray(z, dtype=_np.float32))
+                cap["bytes"] += z.size * 4
+                for key, attr in (("surface_dx", "_dx"), ("surface_dy", "_dy")):
+                    d = getattr(self.field, attr, None)
+                    if d is not None:
+                        cap[key].append(_np.asarray(d, dtype=_np.float32))
+                        cap["bytes"] += d.size * 4
+
+        model = self._face_model()
+        if (model is not None and self._step_count % cap["faces_every"] == 0
+                and getattr(model, "last_forces", None) is not None):
+            c = _np.asarray(model.last_centroids, dtype=_np.float32)
+            f = _np.asarray(model.last_forces, dtype=_np.float32)
+            cap["face_t"].append(self._sim_time)
+            cap["face_counts"].append(len(c))
+            cap["face_centroids"].append(c)
+            cap["face_forces"].append(f)
+            cap["bytes"] += (c.size + f.size) * 4
+
+        if cap["bytes"] > cap["limit"]:
+            cap["stopped"] = True
+            self._log(
+                f"capture hit {cap['limit']/1e6:.0f} MB at t={self._sim_time:.1f}s "
+                "and stopped recording. Raise limit_mb, or sample the surface "
+                "and faces less often.", "warn")
+
+    def _write_capture(self) -> None:
+        import numpy as _np
+
+        cap, self._cap = self._cap, None
+        if cap is None or not cap["t"]:
+            return
+        out = {k: _np.asarray(cap[k]) for k in
+               ("t", "pos", "quat", "lin_vel", "ang_vel", "force", "moment")}
+        if cap["surface_t"]:
+            out["surface_t"] = _np.asarray(cap["surface_t"])
+            out["surface_z"] = _np.stack(cap["surface_z"])
+            for key in ("surface_dx", "surface_dy"):
+                if cap[key]:
+                    out[key] = _np.stack(cap[key])
+        if cap["face_t"]:
+            out["face_t"] = _np.asarray(cap["face_t"])
+            out["face_counts"] = _np.asarray(cap["face_counts"], dtype=_np.int32)
+            out["face_centroids"] = _np.concatenate(cap["face_centroids"])
+            out["face_forces"] = _np.concatenate(cap["face_forces"])
+        try:
+            _np.savez_compressed(cap["path"], **out)
+            self._log(f"capture written: {cap['path']}  "
+                      f"{len(out['t'])} ticks, {cap['bytes']/1e6:.1f} MB raw",
+                      BANNER_LEVEL)
+        except Exception as exc:                      # noqa: BLE001
+            self._log(f"capture could not be written ({exc})", "error")
 
     # ------------------------------------------------------------------ camera
 
@@ -462,6 +675,7 @@ class MultiModalWaveSimExtension(_ExtBase):
                 f"floats at {bridge.mass / 1000.0:.4f} m^3 displaced",
                 BANNER_LEVEL,
             )
+            self._sync_face_capture()
             return True
         except Exception as exc:                      # noqa: BLE001
             self._log(f"no vessel at {body_path} ({exc})", "error")
@@ -523,6 +737,8 @@ class MultiModalWaveSimExtension(_ExtBase):
                 # of the run - exactly where the interesting part is.
                 if self._csv is not None:
                     self.record(None)
+                if self._cap is not None:
+                    self._write_capture()
                 self._log("timeline stopped, counters reset", BANNER_LEVEL)
         except Exception:                             # noqa: BLE001
             pass
@@ -559,6 +775,9 @@ class MultiModalWaveSimExtension(_ExtBase):
                     self.field.write_grid(stage, stride=self._grid_stride,
                                           visible=self.show_grid)
                     self._grid_drawn = self.show_grid
+                if self.show_forces or self._forces_drawn:
+                    self._draw_face_forces(stage)
+                    self._forces_drawn = self.show_forces
                 if self.follow:
                     self._update_chase_camera(stage)
 
@@ -575,6 +794,8 @@ class MultiModalWaveSimExtension(_ExtBase):
                     self._sim_time + FORCE_LEAD_STEPS * dt,
                 )
                 self.vessel.apply(wrench)
+                if self._cap is not None:
+                    self._capture_row(state, wrench)
 
                 if self._csv_writer is not None:
                     self._record_row(state, wrench)

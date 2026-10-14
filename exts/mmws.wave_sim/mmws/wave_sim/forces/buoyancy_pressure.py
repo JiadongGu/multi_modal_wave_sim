@@ -24,6 +24,10 @@ class BuoyancyPressure(ForceModel):
         if self.triangles.max(initial=0) >= len(self.vertices):
             raise ValueError("triangle index out of range")
         self.density = float(density)
+        # Set True by the extension when the force arrows or the run
+        # recorder are on. Nothing else reads these.
+        self.record_faces = False
+        self.last_wet = self.last_centroids = self.last_forces = None
 
     @staticmethod
     def _clip(tri_pts, tri_depth):
@@ -68,6 +72,12 @@ class BuoyancyPressure(ForceModel):
         depth = np.asarray(wave_field.height(world[:,0],world[:,1])) - world[:,2] #vectorized call for all M vertices
         wet = self._clip(world[self.triangles],depth[self.triangles])
         if len(wet) == 0:
+            # Clear the debug capture too, or a hull that lifts clear of the
+            # water keeps drawing the arrows it had on the way out.
+            if self.record_faces:
+                self.last_wet = np.zeros((0, 3, 3))
+                self.last_centroids = np.zeros((0, 3))
+                self.last_forces = np.zeros((0, 3))
             return Wrench()
 
         #standard triangle geometry
@@ -86,4 +96,15 @@ class BuoyancyPressure(ForceModel):
         face = -(self.density * GRAVITY * d_c *area)[:, None] * normal
         com_world = position + R @ np.asarray(body.center_of_mass, dtype=float)
         moment = np.cross(centroid-com_world,face)
+
+        # Optional capture of the per-face terms, for drawing the arrows and
+        # for the run recorder. Off by default: these are references to arrays
+        # that already exist, so the cost is a few pointers, but holding them
+        # keeps a frame's worth of geometry alive and there is no reason to
+        # when nobody is looking. World frame, like everything above.
+        if self.record_faces:
+            self.last_wet = wet
+            self.last_centroids = centroid
+            self.last_forces = face
+
         return Wrench(R.T @ face.sum(axis=0), R.T @ moment.sum(axis=0))

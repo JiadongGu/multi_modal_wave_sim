@@ -33,6 +33,8 @@ from math import degrees, pi, radians
 # Ranges are chosen to span the useful physics, not to be round numbers:
 # gamma below 1 is unphysical and the class rejects it, and gamma = 1 is
 # exactly Pierson-Moskowitz, so the slider's left end is a different spectrum.
+CAPTURE_PATH = "/tmp/mmws_run.npz"
+
 PARAMS = (
     ("Hs", "hs", 0.0, 8.0, "m",
      "significant wave height: the mean of the highest third, = 4 * the "
@@ -158,6 +160,30 @@ class SpectrumPanel:
                 ui.Label("show wave grid", style={"color": 0xFFAAAAAA})
 
             with ui.HStack(height=24, spacing=6):
+                ui.Label("forces", width=70,
+                         tooltip="draw the clipped wetted triangles and one "
+                                 "arrow per face along its pressure force. "
+                                 "Arrows rescale every frame so the largest "
+                                 "is about a sixth of the hull")
+                self._arrows = ui.CheckBox(width=20)
+                self._arrows.model.add_value_changed_fn(
+                    lambda m: self._ext.show_force_vectors(bool(m.get_value_as_bool())))
+                ui.Label("show hull faces + force vectors",
+                         style={"color": 0xFFAAAAAA})
+
+            with ui.HStack(height=24, spacing=6):
+                ui.Label("record", width=70,
+                         tooltip="write every tick of this run to "
+                                 "/tmp/mmws_run.npz - pose, velocity, wrench, "
+                                 "the wave surface, and every face force. "
+                                 "Overwritten each run, written on Stop")
+                self._capture = ui.CheckBox(width=20)
+                self._capture.model.add_value_changed_fn(
+                    lambda m: self._ext.capture(CAPTURE_PATH
+                                                if m.get_value_as_bool() else None))
+                ui.Label("record run to .npz", style={"color": 0xFFAAAAAA})
+
+            with ui.HStack(height=24, spacing=6):
                 ui.Label("camera", width=70,
                          tooltip="chase the hull with a level camera. Follows "
                                  "position only - a camera that rolled with "
@@ -261,6 +287,8 @@ class SpectrumPanel:
         self._foam_label.text = f"{thr:.2f}"
         self._grid.model.set_value(bool(getattr(self._ext, "show_grid", False)))
         self._follow.model.set_value(bool(getattr(self._ext, "follow", False)))
+        self._arrows.model.set_value(bool(getattr(self._ext, "show_forces", False)))
+        self._capture.model.set_value(getattr(self._ext, "_cap", None) is not None)
         self._report()
 
     def apply(self) -> None:
