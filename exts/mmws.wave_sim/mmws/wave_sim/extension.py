@@ -119,6 +119,8 @@ class MultiModalWaveSimExtension(_ExtBase):
         # How the current field was built, so a spectrum swap can rebuild it.
         self._field_name = None
         self._field_kwargs = {}
+        self._panel = None
+        self._in_select = False
         # Per-step CSV capture, off unless record() turns it on.
         self._csv = None
         self._csv_writer = None
@@ -149,6 +151,7 @@ class MultiModalWaveSimExtension(_ExtBase):
             self._log(f"  could not build defaults: {exc}", "error")
 
         self._subscribe()
+        self.show_ui()
         self._log("ready", BANNER_LEVEL)
 
     def on_shutdown(self) -> None:
@@ -159,6 +162,9 @@ class MultiModalWaveSimExtension(_ExtBase):
         # half-torn-down extension is how Isaac Sim crashes on reload, and
         # Python extensions reload often during development.
         self._unsubscribe()
+        if getattr(self, "_panel", None) is not None:
+            self._panel.destroy()
+            self._panel = None
         if getattr(self, "_csv", None) is not None:
             self.record(None)
         self.spectrum = None
@@ -220,6 +226,38 @@ class MultiModalWaveSimExtension(_ExtBase):
         if force_model is not None:
             self.force_model = FORCES.create(force_model)
             self._log(f"forces    -> {self.force_model!r}", BANNER_LEVEL)
+
+        # select() is also called from the Script Editor, and a panel showing
+        # numbers that are no longer true is worse than no panel. Guarded
+        # against re-entry: the panel calls select(), which would otherwise
+        # call back into the panel mid-apply.
+        panel = getattr(self, "_panel", None)
+        if panel is not None and not self._in_select:
+            self._in_select = True
+            try:
+                panel.refresh()
+            except Exception:                         # noqa: BLE001
+                pass
+            finally:
+                self._in_select = False
+
+    def show_ui(self) -> None:
+        """Open (or re-open) the spectrum panel.
+
+        Imported here rather than at module scope: ui.py needs omni.ui, which
+        does not exist outside Kit, and tools/selftest.py imports this package
+        from a plain python shell. A missing panel must never be the reason
+        the physics cannot be tested.
+        """
+        try:
+            from .ui import SpectrumPanel
+
+            if self._panel is not None:
+                self._panel.destroy()
+            self._panel = SpectrumPanel(self)
+        except Exception as exc:                      # noqa: BLE001
+            self._log(f"no UI panel ({exc})", "warn")
+            self._panel = None
 
     def record(self, path=None):
         """Write one row per physics step to CSV, for frequency-domain work.

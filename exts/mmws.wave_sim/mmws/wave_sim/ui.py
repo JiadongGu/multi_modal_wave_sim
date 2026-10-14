@@ -1,0 +1,190 @@
+"""A panel of sliders for the JONSWAP parameters.
+
+Everything here is a view. It reads the extension's current spectrum to seed
+itself and calls `select()` to change it - the same entry point the Script
+Editor uses - so there is no second path into the model that could drift from
+the first. If a slider does something `select()` cannot, that is a bug in the
+slider.
+
+Why the sliders apply on RELEASE and not while dragging
+-------------------------------------------------------
+Changing a spectral parameter rebuilds the wave field, because an FFT field
+samples the spectrum once in _build() and bakes h0. That rebuild is about
+5 ms at resolution 64. Cheap - but a drag emits a value change per mouse move,
+so continuously applying would rebuild the sea tens of times a second and
+reseed the surface under a floating hull each time. add_end_edit_fn fires once,
+when the mouse comes up.
+
+What changing a parameter does to a hull already in the water
+--------------------------------------------------------------
+It reseeds the surface. h0 is drawn from the spectrum, so a new spectrum is a
+new realisation of the sea, not a smooth morph of the old one - the water under
+the boat jumps. The clock is preserved (select() advances the new field to the
+current sim time) but the waves themselves are new. That is inherent to
+changing a sea state, not a defect, and it is the reason the panel reports the
+Hs it actually got rather than the one you asked for.
+"""
+
+from __future__ import annotations
+
+from math import degrees, pi, radians
+
+# Slider name, attribute on the spectrum, min, max, unit, and what it does.
+# Ranges are chosen to span the useful physics, not to be round numbers:
+# gamma below 1 is unphysical and the class rejects it, and gamma = 1 is
+# exactly Pierson-Moskowitz, so the slider's left end is a different spectrum.
+PARAMS = (
+    ("Hs", "hs", 0.0, 8.0, "m",
+     "significant wave height: the mean of the highest third, = 4 * the "
+     "surface standard deviation"),
+    ("Tp", "tp", 1.0, 20.0, "s",
+     "peak period: where the spectrum has most of its energy. "
+     "wavelength = g Tp^2 / 2pi"),
+    ("gamma", "gamma", 1.0, 7.0, "",
+     "peak enhancement. 1.0 is Pierson-Moskowitz (fully developed); 3.3 is "
+     "the JONSWAP mean; higher is a narrower, fetch-limited sea"),
+    ("direction", "wind_dir", -180.0, 180.0, "deg",
+     "mean wave heading. stored in radians, shown in degrees"),
+    ("spread s", "spread_s", 1.0, 30.0, "",
+     "cos-2s spreading exponent. low is a confused sea spread over many "
+     "headings, high is a narrow swell all going one way"),
+)
+
+
+class SpectrumPanel:
+    """Sliders for the JONSWAP parameters, wired to extension.select()."""
+
+    def __init__(self, ext) -> None:
+        import omni.ui as ui
+
+        self._ext = ext
+        self._ui = ui
+        self._sliders = {}
+        self._value_labels = {}
+        self._readout = None
+        self._window = ui.Window("Multi-Modal Wave Sim", width=420, height=320)
+        with self._window.frame:
+            self._build()
+        self.refresh()
+
+    # ------------------------------------------------------------------ layout
+
+    def _build(self) -> None:
+        ui = self._ui
+        with ui.VStack(spacing=6, height=0):
+            ui.Label("JONSWAP spectrum", height=22,
+                     style={"font_size": 16, "color": 0xFFCCCCCC})
+            ui.Label("sliders apply when you release them", height=16,
+                     style={"font_size": 12, "color": 0xFF888888})
+            ui.Spacer(height=4)
+
+            for label, attr, lo, hi, unit, tip in PARAMS:
+                with ui.HStack(height=24, spacing=6):
+                    ui.Label(label, width=70, tooltip=tip)
+                    slider = ui.FloatSlider(min=lo, max=hi)
+                    slider.model.set_value(lo)
+                    value = ui.Label("", width=74,
+                                     style={"color": 0xFFAAAAAA})
+                    self._sliders[attr] = slider
+                    self._value_labels[attr] = (value, unit)
+                    # Two callbacks on purpose. The first keeps the number
+                    # beside the slider honest while you drag; the second is
+                    # the only one that touches the model.
+                    slider.model.add_value_changed_fn(
+                        lambda m, a=attr: self._show(a, m.get_value_as_float()))
+                    slider.model.add_end_edit_fn(lambda m: self.apply())
+
+            ui.Spacer(height=6)
+            with ui.HStack(height=26, spacing=6):
+                ui.Button("Apply", clicked_fn=self.apply, width=80)
+                ui.Button("Pierson-Moskowitz", width=150,
+                          tooltip="gamma = 1: the same spectrum with no peak "
+                                  "enhancement",
+                          clicked_fn=lambda: self._set("gamma", 1.0))
+                ui.Button("Refresh", clicked_fn=self.refresh, width=80,
+                          tooltip="re-read the sliders from the live spectrum")
+            ui.Spacer(height=4)
+            self._readout = ui.Label("", height=46, word_wrap=True,
+                                     style={"font_size": 12,
+                                            "color": 0xFF99CC99})
+
+    # ------------------------------------------------------------------- state
+
+    def _show(self, attr, value) -> None:
+        label, unit = self._value_labels[attr]
+        label.text = f"{value:.2f} {unit}".strip()
+
+    def _set(self, attr, value) -> None:
+        self._sliders[attr].model.set_value(float(value))
+        self.apply()
+
+    def refresh(self) -> None:
+        """Pull the slider positions from whatever the spectrum currently is.
+
+        The Script Editor can change the spectrum too, and a panel showing
+        stale numbers is worse than no panel.
+        """
+        spectrum = getattr(self._ext, "spectrum", None)
+        if spectrum is None:
+            return
+        for _, attr, lo, hi, _, _ in PARAMS:
+            value = getattr(spectrum, attr, None)
+            if value is None:
+                continue
+            if attr == "wind_dir":
+                value = degrees(value)
+            value = min(max(float(value), lo), hi)
+            self._sliders[attr].model.set_value(value)
+            self._show(attr, value)
+        self._report()
+
+    def apply(self) -> None:
+        kwargs = {}
+        for _, attr, _, _, _, _ in PARAMS:
+            value = self._sliders[attr].model.get_value_as_float()
+            kwargs[attr] = radians(value) if attr == "wind_dir" else value
+        try:
+            self._ext.select(spectrum="jonswap", spectrum_kwargs=kwargs)
+        except Exception as exc:                      # noqa: BLE001
+            if self._readout:
+                self._readout.text = f"rejected: {exc}"
+            return
+        self._report()
+
+    def _report(self) -> None:
+        """What the water ACTUALLY is, which is not always what was asked for.
+
+        Hs comes back from the realised surface, not from the parameter: a
+        finite tile and a finite resolution cannot hold every wave the
+        spectrum describes, so the number it achieves is the honest one.
+        """
+        if self._readout is None:
+            return
+        field = getattr(self._ext, "field", None)
+        if field is None:
+            self._readout.text = "no field"
+            return
+        tp = self._sliders["tp"].model.get_value_as_float()
+        wavelength = 9.80665 * tp * tp / (2.0 * pi)
+        try:
+            achieved = float(field.significant_height())
+        except Exception:                             # noqa: BLE001
+            achieved = float("nan")
+        asked = self._sliders["hs"].model.get_value_as_float()
+        note = ""
+        if wavelength > field.tile_size:
+            note = (f"\npeak wavelength {wavelength:.0f} m is longer than the "
+                    f"{field.tile_size:.0f} m tile - it will not fit")
+        elif wavelength < 4.0 * field.cell_size:
+            note = (f"\npeak wavelength {wavelength:.1f} m is under 4 cells "
+                    f"({field.cell_size:.2f} m) - under-resolved")
+        self._readout.text = (
+            f"realised Hs {achieved:.3f} m   (asked {asked:.2f})\n"
+            f"peak wavelength {wavelength:.1f} m   tile {field.tile_size:.0f} m"
+            f"   cell {field.cell_size:.2f} m{note}"
+        )
+
+    def destroy(self) -> None:
+        if self._window is not None:
+            self._window.destroy()
+            self._window = None

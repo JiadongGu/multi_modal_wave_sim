@@ -19,6 +19,7 @@ repository = "https://github.com/JiadongGu/multi_modal_wave_sim"
 # that need them actually exist.
 [dependencies]
 "omni.kit.uiapp" = {}
+"omni.ui" = {}            # the spectrum panel; uiapp pulls it in, but say so
 "omni.usd" = {}
 
 # The python package Kit imports on startup.  The path is relative to this
