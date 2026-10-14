@@ -58,6 +58,25 @@ HULL = globals().get("HULL", "/home/asv/Downloads/BlueBoat_hulls_only.usdc")
 MASS = globals().get("MASS", None)
 DRAFT = globals().get("DRAFT", None)
 COM_OFFSET = np.array(globals().get("COM_OFFSET", (0.0, 0.0, 0.0)), dtype=float)
+# --- where the weight actually is -------------------------------------------
+# A ship is not a solid lump of uniform stuff, and pretending it is puts the
+# centre of gravity in the wrong place, which puts GM in the wrong place,
+# which puts the roll period in the wrong place. Three components:
+#
+#   plating      the hull is a SHELL. Steel on the shell plating, frames and
+#                decks - mass spread over the surface, not through the volume.
+#   machinery    engines, gearboxes, shafting, tanks and any ballast. Heavy,
+#                and deliberately as low as the designer could get it.
+#   topside      the deckhouse, bridge, mast and A-frame. Light alloy, thin,
+#                and high up - it is the only thing raising KG, and raising KG
+#                is how ships become tender.
+#
+# Fractions of the total, so they must sum to 1 with the plating as the
+# remainder. These are typical for a small steel survey vessel, not measured.
+SUPER_FRACTION = float(globals().get("SUPER_FRACTION", 0.10))
+MACHINERY_FRACTION = float(globals().get("MACHINERY_FRACTION", 0.35))
+# Height of the machinery lump above the keel, as a fraction of hull depth.
+MACHINERY_KG = float(globals().get("MACHINERY_KG", 0.22))
 RHO = 1000.0
 GRAVITY = 9.80665
 
@@ -228,6 +247,103 @@ displaced = MASS / RHO
 h = 1e-4
 waterplane = (lift_at(z_eq - h) - lift_at(z_eq + h)) / (2 * h) / (RHO * GRAVITY)
 
+# --- where the weight is, BEFORE anything that depends on it ------------
+#
+# GM is measured about the centre of gravity, so the mass distribution has
+# to exist before the heel test runs. Computing it afterwards - which is
+# what this did at first - silently reported the GM of a hull whose weight
+# was all at the volume centroid, which is the error this whole block is
+# here to fix.
+def _shell_points(verts, tris):
+    """Face centroids and areas: mass spread over plating, not through volume."""
+    a, b, c = (verts[tris[:, i]] for i in range(3))
+    area = 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)
+    return (a + b + c) / 3.0, area
+
+
+# Build the mass distribution, then read the centre of gravity and the inertia
+# tensor off it. This replaces a solid bounding box, which put the centre of
+# gravity at the hull's volume centroid and ignored the superstructure
+# entirely - so every ship came out with the same KG as a block of wood.
+lumps = []                                            # (position, mass)
+
+hull_pts, hull_area = _shell_points(vertices, triangles)
+super_mass = MASS * SUPER_FRACTION if visual_parts else 0.0
+mach_mass = MASS * MACHINERY_FRACTION
+plating_mass = MASS - super_mass - mach_mass
+if plating_mass <= 0.0:
+    raise ValueError(
+        f"SUPER_FRACTION + MACHINERY_FRACTION = "
+        f"{SUPER_FRACTION + MACHINERY_FRACTION:.2f}, leaving nothing for the "
+        "hull plating")
+lumps.append((hull_pts, plating_mass * hull_area / hull_area.sum()))
+
+if visual_parts:
+    sv = np.concatenate([q[0] for q in visual_parts], axis=0) - centroid
+    sf, off = [], 0
+    for pv, pf in visual_parts:
+        sf.append(pf + off)
+        off += len(pv)
+    sup_pts, sup_area = _shell_points(sv, np.concatenate(sf, axis=0))
+    lumps.append((sup_pts, super_mass * sup_area / sup_area.sum()))
+
+# Machinery as one lump on the centreline, low, a little aft of amidships -
+# which is where the engine room is on a vessel with the accommodation forward.
+mach_at = np.array([[float(lo[0] + 0.42 * extents[0]), 0.0,
+                     float(lo[2] + MACHINERY_KG * extents[2])]])
+lumps.append((mach_at, np.array([mach_mass])))
+
+points = np.concatenate([lp[0] for lp in lumps], axis=0)
+weights = np.concatenate([lp[1] for lp in lumps], axis=0)
+com = (points * weights[:, None]).sum(axis=0) / weights.sum()
+
+# Inertia about the centre of gravity: sum of m (|r|^2 I - r r^T).
+r = points - com
+tensor = np.zeros((3, 3))
+for ri, mi in zip(r, weights):
+    tensor += mi * (np.dot(ri, ri) * np.eye(3) - np.outer(ri, ri))
+# The tensor is NOT diagonal in body axes - the machinery sits aft of the
+# centre of gravity and the deckhouse forward and above it, so there is a real
+# product of inertia coupling roll to yaw. Taking the diagonal and throwing
+# the rest away would quietly misstate the roll inertia.
+#
+# USD does not need it to be diagonal in BODY axes, only in SOME axes:
+# diagonalInertia plus principalAxes is exactly an eigendecomposition. eigh
+# gives it directly, since an inertia tensor is symmetric and positive
+# definite.
+eigenvalues, axes = np.linalg.eigh(tensor)
+if np.linalg.det(axes) < 0.0:
+    axes[:, 0] = -axes[:, 0]            # keep it a rotation, not a reflection
+inertia = eigenvalues.copy()
+off_diagonal = np.abs(tensor - np.diag(np.diag(tensor))).max()
+
+
+def _matrix_to_quat(m):
+    """Rotation matrix -> (w, x, y, z).
+
+    Branching on the largest diagonal term rather than always using the trace:
+    the trace form divides by sqrt(1 + trace), which loses all its precision
+    when the rotation approaches 180 degrees and the trace approaches -1.
+    """
+    t = float(np.trace(m))
+    if t > 0.0:
+        r = np.sqrt(1.0 + t) * 2.0
+        return np.array([0.25 * r, (m[2, 1] - m[1, 2]) / r,
+                         (m[0, 2] - m[2, 0]) / r, (m[1, 0] - m[0, 1]) / r])
+    i = int(np.argmax(np.diag(m)))
+    j, k = (i + 1) % 3, (i + 2) % 3
+    r = np.sqrt(1.0 + m[i, i] - m[j, j] - m[k, k]) * 2.0
+    q = np.empty(4)
+    q[0] = (m[k, j] - m[j, k]) / r
+    q[i + 1], q[j + 1], q[k + 1] = 0.25 * r, (m[j, i] + m[i, j]) / r, (m[k, i] + m[i, k]) / r
+    return q / np.linalg.norm(q)
+
+
+principal_axes = _matrix_to_quat(axes)
+
+COM_OFFSET = com + COM_OFFSET      # the override still shifts it if you set one
+
+
 # --- GM, straight out of the force model ------------------------------------
 # Heel the hull a small angle and read the restoring moment. Moments in the
 # model are taken about the centre of mass and gravity has no moment about its
@@ -261,15 +377,29 @@ if abs(gm2 - gm1) > 0.2 * abs(gm1):
     print("        treat the single number with suspicion")
 
 heave_period = 2 * np.pi * np.sqrt(MASS / (RHO * GRAVITY * waterplane))
-inertia = np.array([
-    MASS / 12.0 * (extents[1] ** 2 + extents[2] ** 2),
-    MASS / 12.0 * (extents[0] ** 2 + extents[2] ** 2),
-    MASS / 12.0 * (extents[0] ** 2 + extents[1] ** 2),
-])
+
+
 if gm > 0:
     roll_period = 2 * np.pi * np.sqrt(inertia[0] / (RHO * GRAVITY * displaced * gm))
 else:
     roll_period = float("inf")
+print()
+print("  --- weight distribution ---")
+print(f"    plating          {plating_mass/1000:7.1f} t over the shell")
+if visual_parts:
+    print(f"    superstructure   {super_mass/1000:7.1f} t over the deckhouse")
+print(f"    machinery        {mach_mass/1000:7.1f} t at "
+      f"{MACHINERY_KG*extents[2]:.2f} m above the keel")
+print(f"    centre of gravity {np.round(COM_OFFSET, 3)} m (body frame)")
+print(f"    KG                {COM_OFFSET[2] - lo[2]:.2f} m above the keel, "
+      f"{(COM_OFFSET[2] - lo[2]) / extents[2] * 100:.0f}% of the depth")
+print(f"    inertia           {np.round(inertia / 1000.0, 1)} t.m^2")
+if off_diagonal > 0.02 * np.abs(inertia).max():
+    tilt = np.degrees(np.arccos(np.clip(abs(axes[0, 0]), -1.0, 1.0)))
+    print(f"      products of inertia {off_diagonal/1000:.0f} t.m^2 -> the "
+          f"principal axes are {tilt:.1f} deg off the body axes,")
+    print("      which is authored as principalAxes rather than discarded")
+print()
 print(f"    heave period     {heave_period:.2f} s")
 print(f"    roll period      {roll_period:.2f} s   (upper bound; bounding-box inertia)")
 if gm <= 0:
@@ -308,7 +438,8 @@ mass_api = UsdPhysics.MassAPI.Apply(prim)
 mass_api.CreateMassAttr(MASS)
 mass_api.CreateCenterOfMassAttr(Gf.Vec3f(*(float(v) for v in COM_OFFSET)))
 mass_api.CreateDiagonalInertiaAttr(Gf.Vec3f(*(float(v) for v in inertia)))
-mass_api.CreatePrincipalAxesAttr(Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+mass_api.CreatePrincipalAxesAttr(Gf.Quatf(
+    float(principal_axes[0]), Gf.Vec3f(*(float(v) for v in principal_axes[1:]))))
 
 try:
     from pxr import PhysxSchema

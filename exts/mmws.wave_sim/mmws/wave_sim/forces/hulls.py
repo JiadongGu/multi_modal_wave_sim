@@ -221,7 +221,8 @@ def planing_hull(length: float = 5.28, beam: float = 2.21, depth: float = 0.60,
 
 
 def displacement_hull(length: float = 31.5, beam: float = 7.7, depth: float = 4.6,
-                      bilge: float = 0.38, transom: float = 0.72,
+                      bilge: float = 0.82, plan_fullness: float = 0.90,
+                      transom: float = 0.72,
                       flare: float = 1.04, forefoot: float = 0.55,
                       sheer_rise: float = 0.14, stations: int = 45,
                       sections: int = 13, bow_fraction: float = 0.99):
@@ -230,6 +231,14 @@ def displacement_hull(length: float = 31.5, beam: float = 7.7, depth: float = 4.
     Defaults are the Portuguese Andromeda class coastal hydrographic vessel -
     31.5 x 7.7 m, 3.1 m draft, 245 t - which is about the smallest thing
     anyone calls a survey ship.
+
+    Those two published figures are not the same loading condition, and the
+    difference is visible. 245 t at 3.1 m draught would need Cb = 0.35 on this
+    waterline, which is fast-patrol-boat fine; a survey ship runs 0.45 to
+    0.55. So 245 t is light ship and 3.1 m is the loaded draught. At these
+    defaults the hull floats at about 2.3 m light and 3.1 m at 380 t, Cb 0.53.
+    Loading it at 245 t leaves it riding 1.3 m high, showing twice the
+    topsides it should, and it looks like a bathtub.
 
     What makes this shape different from planing_hull
     -------------------------------------------------
@@ -259,7 +268,7 @@ def displacement_hull(length: float = 31.5, beam: float = 7.7, depth: float = 4.
     t = np.linspace(0.0, bow_fraction, stations)        # 0 transom, 1 stem
 
     # Plan: a transom aft, full amidships, fine forward.
-    plan = (1.0 - t ** 3.0) ** 0.40
+    plan = (1.0 - t ** 3.0) ** plan_fullness
     plan *= 1.0 - (1.0 - transom) * np.clip((0.30 - t) / 0.30, 0.0, 1.0) ** 2
     half_width = half_b * plan
 
@@ -285,6 +294,9 @@ def displacement_hull(length: float = 31.5, beam: float = 7.7, depth: float = 4.
             else:
                 # Topsides, very slightly flared outward toward the deck.
                 frac = 1.0 + (flare - 1.0) * (u - bilge) / (1.0 - bilge)
+            # The floor lift is strongest on the centreline, where frac is 0,
+            # and dies away by the turn of the bilge - which is what makes it
+            # a rise of floor rather than simply a shallower hull.
             starboard.append((x, w * frac, kz + span * u))
         port = [(px, -py, pz) for px, py, pz in reversed(starboard[:-1])]
         rings.append(np.array(starboard + port, dtype=float))
@@ -333,23 +345,23 @@ def superstructure(length: float = 31.5, beam: float = 7.7, depth: float = 4.6,
 
     # Main deckhouse, set forward of midships the way a survey ship is - the
     # whole point of the aft two-thirds is clear working deck.
-    box(0.58 * length, 0.0, deck + 1.35, 0.30 * length, 0.76 * beam, 2.7)
+    box(0.56 * length, 0.0, deck + 1.25, 0.34 * length, 0.62 * beam, 2.5)
     # Bridge, one deck up and narrower, with the wings a survey ship needs.
-    box(0.63 * length, 0.0, deck + 3.80, 0.17 * length, 0.62 * beam, 2.2)
-    box(0.63 * length, 0.0, deck + 3.80, 0.09 * length, 0.92 * beam, 1.1)
+    box(0.62 * length, 0.0, deck + 3.45, 0.18 * length, 0.50 * beam, 2.0)
+    box(0.62 * length, 0.0, deck + 3.45, 0.08 * length, 0.80 * beam, 0.9)
     # Mast above the bridge, and a radar bar across it.
-    box(0.60 * length, 0.0, deck + 7.20, 0.5, 0.5, 4.6)
-    box(0.60 * length, 0.0, deck + 9.10, 0.4, 2.6, 0.3)
+    box(0.59 * length, 0.0, deck + 6.60, 0.35, 0.35, 4.2)
+    box(0.59 * length, 0.0, deck + 8.40, 0.3, 2.2, 0.25)
     # Funnel, aft of the bridge.
-    box(0.47 * length, 0.0, deck + 4.10, 0.10 * length, 0.22 * beam, 2.8)
+    box(0.46 * length, 0.0, deck + 3.60, 0.08 * length, 0.17 * beam, 2.4)
     # Stern A-frame: two legs and a cross beam, which is the single most
     # recognisable thing on a survey ship - it is how the gear goes over.
     for side in (-1.0, 1.0):
-        box(0.045 * length, side * 0.36 * beam, deck + 2.0, 0.5, 0.5, 4.2)
-    box(0.045 * length, 0.0, deck + 4.05, 0.5, 0.76 * beam, 0.5)
+        box(0.045 * length, side * 0.33 * beam, deck + 1.9, 0.35, 0.35, 3.9)
+    box(0.045 * length, 0.0, deck + 3.75, 0.35, 0.70 * beam, 0.35)
     # Bulwark around the working deck, so the aft end is not a bare slab.
     for side in (-1.0, 1.0):
-        box(0.28 * length, side * 0.47 * beam, deck + 0.55, 0.52 * length, 0.25, 1.1)
+        box(0.27 * length, side * 0.48 * beam, deck + 0.45, 0.50 * length, 0.18, 0.9)
 
     vertices = np.concatenate([p[0] for p in parts], axis=0)
     triangles, offset = [], 0
