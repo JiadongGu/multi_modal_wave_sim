@@ -125,6 +125,10 @@ class MultiModalWaveSimExtension(_ExtBase):
         self.show_grid = False
         self._grid_stride = 8
         self._grid_drawn = False
+        # Chase camera, off by default.
+        self.follow = False
+        self._cam_eye = None
+        self._cam_at = None
         # Per-step CSV capture, off unless record() turns it on.
         self._csv = None
         self._csv_writer = None
@@ -244,6 +248,91 @@ class MultiModalWaveSimExtension(_ExtBase):
                 pass
             finally:
                 self._in_select = False
+
+    # ------------------------------------------------------------------ camera
+
+    def follow_vessel(self, enable: bool = True, distance: float = 14.0,
+                      height: float = 5.0, azimuth: float = 135.0,
+                      lag: float = 0.45) -> None:
+        """Track the hull with a chase camera, and point the viewport at it.
+
+        Parenting a camera under the vessel would be simpler and is the wrong
+        answer: it would inherit the hull's roll and pitch, and a camera that
+        rolls with a boat in a seaway is unwatchable. This follows the
+        POSITION only and keeps its own level horizon.
+
+        `lag` is the time constant of an exponential follow, in seconds. Zero
+        is rigid, which looks worse than you would expect - every wave the
+        hull rides shows up as camera shake. Around half a second lets the
+        boat move within the frame, which is what makes it read as a boat on
+        water rather than a boat held in a vice.
+
+        `azimuth` is a WORLD heading, not relative to the hull. A camera that
+        swings round to stay behind a yawing boat makes the sea appear to
+        rotate, and the sea is the thing being looked at.
+        """
+        self.follow = bool(enable)
+        self._cam_distance = float(distance)
+        self._cam_height = float(height)
+        self._cam_azimuth = float(azimuth)
+        self._cam_lag = max(float(lag), 0.0)
+        if not enable:
+            return
+        self._cam_eye = self._cam_at = None      # snap, do not glide, on enable
+        try:
+            from omni.kit.viewport.utility import get_active_viewport
+
+            viewport = get_active_viewport()
+            if viewport is not None:
+                viewport.camera_path = "/World/ChaseCam"
+        except Exception as exc:                  # noqa: BLE001
+            self._log(f"camera made, but could not switch the viewport ({exc}). "
+                      "Pick /World/ChaseCam from the viewport camera menu.",
+                      BANNER_LEVEL)
+
+    def _update_chase_camera(self, stage) -> None:
+        import math
+
+        import numpy as _np
+        from pxr import Gf, UsdGeom
+
+        if self.vessel is None:
+            return
+        try:
+            target = _np.asarray(self.vessel.read_state().position, dtype=float)
+        except Exception:                         # noqa: BLE001
+            return
+
+        a = math.radians(self._cam_azimuth)
+        desired = target + _np.array([self._cam_distance * math.cos(a),
+                                      self._cam_distance * math.sin(a),
+                                      self._cam_height])
+        if self._cam_eye is None:
+            self._cam_eye, self._cam_at = desired, target
+        else:
+            # Exponential smoothing on the draw tick, not the physics tick:
+            # 1 - exp(-dt/tau) makes the response independent of the rate, so
+            # changing the redraw throttle does not change how it feels.
+            alpha = 1.0 if self._cam_lag <= 0.0 else (
+                1.0 - math.exp(-(1.0 / 20.0) / self._cam_lag))
+            self._cam_eye += (desired - self._cam_eye) * alpha
+            self._cam_at += (target - self._cam_at) * alpha
+
+        cam = UsdGeom.Camera.Get(stage, "/World/ChaseCam")
+        if not cam:
+            cam = UsdGeom.Camera.Define(stage, "/World/ChaseCam")
+            cam.CreateFocalLengthAttr(22.0)       # wide: keep sea in the frame
+            cam.CreateClippingRangeAttr(Gf.Vec2f(0.05, 100000.0))
+        # SetLookAt builds a VIEW matrix, which maps world into the camera.
+        # A prim's transform is the other direction, so it is the inverse.
+        view = Gf.Matrix4d().SetLookAt(
+            Gf.Vec3d(*self._cam_eye), Gf.Vec3d(*self._cam_at), Gf.Vec3d(0, 0, 1))
+        xf = UsdGeom.Xformable(cam.GetPrim())
+        ops = xf.GetOrderedXformOps()
+        if not ops or ops[0].GetOpType() != UsdGeom.XformOp.TypeTransform:
+            xf.ClearXformOpOrder()
+            ops = [xf.AddTransformOp()]
+        ops[0].Set(view.GetInverse())
 
     def show_ui(self) -> None:
         """Open (or re-open) the spectrum panel.
@@ -470,6 +559,8 @@ class MultiModalWaveSimExtension(_ExtBase):
                     self.field.write_grid(stage, stride=self._grid_stride,
                                           visible=self.show_grid)
                     self._grid_drawn = self.show_grid
+                if self.follow:
+                    self._update_chase_camera(stage)
 
         if self.vessel is not None and self.force_model is not None and self.field is not None:
             try:

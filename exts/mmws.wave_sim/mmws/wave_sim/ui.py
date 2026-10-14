@@ -141,6 +141,16 @@ class SpectrumPanel:
                                       bool(m.get_value_as_bool())))
                 ui.Label("show wave grid", style={"color": 0xFFAAAAAA})
 
+            with ui.HStack(height=24, spacing=6):
+                ui.Label("camera", width=70,
+                         tooltip="chase the hull with a level camera. Follows "
+                                 "position only - a camera that rolled with "
+                                 "the boat would be unwatchable")
+                self._follow = ui.CheckBox(width=20)
+                self._follow.model.add_value_changed_fn(
+                    lambda m: self._ext.follow_vessel(bool(m.get_value_as_bool())))
+                ui.Label("follow the vessel", style={"color": 0xFFAAAAAA})
+
             ui.Spacer(height=6)
             with ui.HStack(height=26, spacing=6):
                 ui.Button("Apply", clicked_fn=self.apply, width=80)
@@ -207,6 +217,7 @@ class SpectrumPanel:
         self._chop_label.text = f"{chop:.2f}"
         self._foam_label.text = f"{thr:.2f}"
         self._grid.model.set_value(bool(getattr(self._ext, "show_grid", False)))
+        self._follow.model.set_value(bool(getattr(self._ext, "follow", False)))
         self._report()
 
     def apply(self) -> None:
