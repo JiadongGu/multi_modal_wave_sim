@@ -34,6 +34,25 @@ import numpy as np
 import omni.usd
 from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade
 
+# Where this repo lives, derived from the installed package rather than from
+# __file__. Inside Kit's Script Editor __file__ IS defined - as a throwaway
+# /tmp/carb.XXXX/script_NNN.py - so trusting it points every relative path at
+# a temp directory. The package is already importable (the extension is
+# enabled), and its location is the one thing that is always right.
+import mmws.wave_sim as _pkg
+from pathlib import Path as _P
+
+# Walk up until the tools directory turns up, rather than counting parents:
+# I counted three and it was four. A search is right whatever the layout.
+TOOLS = None
+for _p in _P(_pkg.__file__).resolve().parents:
+    if (_p / "tools" / "make_hull.py").is_file():
+        TOOLS = _p / "tools"
+        break
+if TOOLS is None:
+    raise RuntimeError(
+        f"cannot find the tools directory above {_pkg.__file__}")
+
 SKY_PNG = globals().get("SKY_PNG", "/tmp/mmws_sky.png")
 SUN_ELEV = float(globals().get("SUN_ELEV", 58.0))
 SUN_AZ = float(globals().get("SUN_AZ", 135.0))
@@ -187,14 +206,6 @@ if vessel:
 # Optional, and it runs the same two tools you would run by hand - the scene
 # builder is a convenience over them, never a second way of doing it.
 if BOAT:
-    import runpy
-    import sys
-    from pathlib import Path as _Path
-
-    tools = _Path("/home/asv/dev/multi_modal_wave_sim/tools")
-    if "__file__" in dir():
-        tools = _Path(__file__).resolve().parent
-
     defaults = {"planing": 771.0, "wigley": 1406.0}
     if BOAT not in defaults:
         raise ValueError(f"BOAT must be 'planing' or 'wigley', got {BOAT!r}")
@@ -203,10 +214,17 @@ if BOAT:
     print(f"  building the {BOAT} hull")
     g = globals()
     g["HULL_TYPE"] = BOAT
-    exec(open(tools / "make_hull.py").read(), g)
+    exec(open(TOOLS / "make_hull.py").read(), g)
     g["HULL"] = g["OUT"]
     g["MASS"] = float(MASS) if MASS else defaults[BOAT]
-    exec(open(tools / "load_hull.py").read(), g)
+    exec(open(TOOLS / "load_hull.py").read(), g)
+
+# Forget the inputs. The Script Editor keeps globals between runs, so a value
+# set once would silently apply to every later run - which is how a sun asked
+# for at 58 degrees came out at the 25 a previous run had left behind.
+for _name in ("SUN_ELEV", "SUN_AZ", "BRIGHTNESS", "BOAT", "MASS", "SKY_PNG",
+              "SKY_WIDTH", "HULL_TYPE", "HULL", "OUT", "LENGTH", "BEAM", "DEPTH"):
+    globals().pop(_name, None)
 
 print()
 print("  the water is dark on purpose: a sea is mostly a mirror, so almost")

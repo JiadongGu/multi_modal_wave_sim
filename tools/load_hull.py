@@ -64,11 +64,9 @@ GRAVITY = 9.80665
 import sys
 from pathlib import Path
 
-here = Path(__file__).resolve().parent if "__file__" in dir() else Path(
-    "/home/asv/dev/multi_modal_wave_sim/tools")
-pkg = here.parent / "exts" / "mmws.wave_sim"
-if str(pkg) not in sys.path:
-    sys.path.insert(0, str(pkg))
+# The package is already importable - the extension is enabled, so Kit put
+# it on sys.path. Deriving a path from __file__ here would point at Kit's
+# throwaway /tmp/carb.XXXX/script_NNN.py instead.
 
 from mmws.wave_sim.forces import BodyState
 from mmws.wave_sim.integration.repair import repair
@@ -332,3 +330,8 @@ print()
 print(f"  {VESSEL} placed at ({centre:.1f}, {centre:.1f}, {z_eq:+.4f}), upright, at rest")
 print(f"  PASS on flat water = z holds at {z_eq:+.4f} and tilt stays near 0")
 print("  select(field='flat') first, then press Play")
+
+# Forget the inputs: the Script Editor keeps globals between runs, so a
+# value set once would silently apply to every run after it.
+for _name in ('HULL', 'MASS', 'DRAFT', 'COM_OFFSET'):
+    globals().pop(_name, None)

@@ -44,11 +44,9 @@ from pxr import Usd, UsdGeom, Vt
 import sys
 from pathlib import Path
 
-here = Path(__file__).resolve().parent if "__file__" in dir() else Path(
-    "/home/asv/dev/multi_modal_wave_sim/tools")
-pkg = here.parent / "exts" / "mmws.wave_sim"
-if str(pkg) not in sys.path:
-    sys.path.insert(0, str(pkg))
+# The package is already importable - the extension is enabled, so Kit put
+# it on sys.path. Deriving a path from __file__ here would point at Kit's
+# throwaway /tmp/carb.XXXX/script_NNN.py instead.
 
 from mmws.wave_sim.forces.hulls import planing_hull, wigley_hull
 from mmws.wave_sim.integration.repair import repair
@@ -122,3 +120,11 @@ for rho, label in ((1000.0, "fresh"), (1025.0, "sea")):
 print()
 print("  now run load_hull.py with this file and the boat's published displacement:")
 print(f"    HULL, MASS = {OUT!r}, <kg>")
+
+# Forget the inputs: the Script Editor keeps globals between runs, so a
+# value set once would silently apply to every run after it.
+# OUT is deliberately NOT cleared: it is this script's RESULT, and make_scene
+# reads it to hand the file straight to load_hull.
+for _name in ('HULL_TYPE', 'LENGTH', 'BEAM', 'DEPTH', 'STATIONS', 'SECTIONS',
+              'FULLNESS', 'TAPER', 'DEADRISE_TRANSOM', 'DEADRISE_BOW'):
+    globals().pop(_name, None)
