@@ -4,8 +4,10 @@
 
 Optional, before the exec:
 
-    SUN_ELEV, SUN_AZ = 25.0, 135.0     # degrees above the horizon, and heading
-    SKY_PNG = "/tmp/mmws_sky.png"
+    SUN_ELEV, SUN_AZ = 58.0, 135.0     # degrees above the horizon, and heading
+    BRIGHTNESS = 0.45                  # the whole scene's exposure, see below
+    BOAT = "planing"                   # also build and load a hull
+    MASS = 771.0                       # kg; defaults per hull type
 
 Why the sky is generated and not downloaded
 -------------------------------------------
@@ -33,9 +35,15 @@ import omni.usd
 from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade
 
 SKY_PNG = globals().get("SKY_PNG", "/tmp/mmws_sky.png")
-SUN_ELEV = float(globals().get("SUN_ELEV", 25.0))
+SUN_ELEV = float(globals().get("SUN_ELEV", 58.0))
 SUN_AZ = float(globals().get("SUN_AZ", 135.0))
 WIDTH = int(globals().get("SKY_WIDTH", 2048))
+# One dial for the whole scene's exposure. The sea is a mirror, so almost all
+# of its brightness is reflected sky - turning the sky down turns the water
+# down with it, which is why there is no separate water brightness.
+BRIGHTNESS = float(globals().get("BRIGHTNESS", 0.45))
+BOAT = globals().get("BOAT", None)      # None, "planing" or "wigley"
+MASS = globals().get("MASS", None)      # kg; defaults per hull type below
 
 
 def _write_png(path, rgb):
@@ -55,7 +63,7 @@ def _write_png(path, rgb):
         f.write(chunk(b"IEND", b""))
 
 
-def _sky(width, sun_elev_deg, sun_az_deg, turbidity=0.35):
+def _sky(width, sun_elev_deg, sun_az_deg, brightness=1.0, turbidity=0.35):
     height = width // 2
     u = (np.arange(width) + 0.5) / width
     v = (np.arange(height) + 0.5) / height
@@ -72,24 +80,42 @@ def _sky(width, sun_elev_deg, sun_az_deg, turbidity=0.35):
 
     up = np.clip(np.sin(elev), 0.0, 1.0)
     t = up ** (0.45 + turbidity)
-    col = (np.array([0.78, 0.85, 0.92]) * (1 - t)[..., None]
-           + np.array([0.17, 0.33, 0.62]) * t[..., None])
+    col = (np.array([0.42, 0.52, 0.64]) * (1 - t)[..., None]
+           + np.array([0.06, 0.13, 0.30]) * t[..., None])
+    # The sun and its glow are NOT scaled by brightness. A dim sky with a
+    # still-bright sun is a sky with contrast; scaling everything together
+    # just gives a flat grey one.
     col += np.array([1.0, 0.86, 0.66]) * (np.clip(cos_sun, 0, 1) ** 220)[..., None] * 0.9
+    col *= brightness
     col += np.array([1.0, 0.97, 0.90]) * (cos_sun > np.cos(np.radians(1.2)))[..., None]
     # Below the horizon a dome light still contributes; black down there reads
     # as a hole under the water rather than as distance.
     below = np.clip(-np.sin(elev), 0.0, 1.0)[..., None]
-    col = col * (1 - below) + np.array([0.09, 0.13, 0.17]) * below
-    col += np.array([0.10, 0.10, 0.08]) * np.exp(-(elev[..., None] / 0.045) ** 2) * 0.5
+    col = col * (1 - below) + np.array([0.03, 0.05, 0.07]) * brightness * below
+    col += (np.array([0.10, 0.10, 0.08]) * brightness
+            * np.exp(-(elev[..., None] / 0.045) ** 2) * 0.5)
     return (np.clip(col, 0, 1) ** (1 / 2.2) * 255).astype(np.uint8), sun
 
 
-def _surface(stage, path, diffuse, roughness, metallic=0.0, opacity=1.0):
+def _surface(stage, path, diffuse, roughness, metallic=0.0, opacity=1.0,
+             read_display_color=False):
     """A UsdPreviewSurface material. Renders in RTX without MDL or Nucleus."""
     material = UsdShade.Material.Define(stage, path)
     shader = UsdShade.Shader.Define(stage, f"{path}/Shader")
     shader.CreateIdAttr("UsdPreviewSurface")
-    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*diffuse))
+    if read_display_color:
+        # Wire diffuseColor to the mesh's own displayColor primvar, which is
+        # where the field writes its foam. Without this the material would
+        # win and every whitecap would be painted over in deep-water blue.
+        reader = UsdShade.Shader.Define(stage, f"{path}/DisplayColor")
+        reader.CreateIdAttr("UsdPrimvarReader_float3")
+        reader.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("displayColor")
+        reader.CreateInput("fallback", Sdf.ValueTypeNames.Float3).Set(Gf.Vec3f(*diffuse))
+        reader.CreateOutput("result", Sdf.ValueTypeNames.Float3)
+        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(
+            reader.ConnectableAPI(), "result")
+    else:
+        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*diffuse))
     shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(float(roughness))
     shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(float(metallic))
     shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(float(opacity))
@@ -102,13 +128,13 @@ if not stage.GetPrimAtPath("/World"):
     UsdGeom.Xform.Define(stage, "/World")
     stage.SetDefaultPrim(stage.GetPrimAtPath("/World"))
 
-image, sun_vec = _sky(WIDTH, SUN_ELEV, SUN_AZ)
+image, sun_vec = _sky(WIDTH, SUN_ELEV, SUN_AZ, BRIGHTNESS)
 _write_png(SKY_PNG, image)
 print(f"  wrote {SKY_PNG}  ({image.shape[1]}x{image.shape[0]})")
 
 # --- dome -------------------------------------------------------------------
 dome = UsdLux.DomeLight.Define(stage, "/World/Sky")
-dome.CreateIntensityAttr(1200.0)
+dome.CreateIntensityAttr(1200.0 * BRIGHTNESS)
 dome.CreateTextureFileAttr().Set(Sdf.AssetPath(SKY_PNG))
 dome.CreateTextureFormatAttr().Set("latlong")
 # A latlong dome is authored around the Y axis by convention; this stage is
@@ -141,7 +167,8 @@ print(f"  sun          /World/Sun   elevation {SUN_ELEV:.0f} deg, heading {SUN_A
 
 # --- materials --------------------------------------------------------------
 water_mat = _surface(stage, "/World/Looks/Water",
-                     diffuse=(0.015, 0.055, 0.075), roughness=0.06, metallic=0.0)
+                     diffuse=(0.015, 0.055, 0.075), roughness=0.06, metallic=0.0,
+                     read_display_color=True)
 water = stage.GetPrimAtPath("/World/Water")
 if water:
     UsdShade.MaterialBindingAPI.Apply(water).Bind(water_mat)
@@ -156,7 +183,33 @@ if vessel:
     UsdShade.MaterialBindingAPI.Apply(vessel).Bind(hull_mat)
     print("  hull material bound to /World/Vessel")
 
+# --- the boat ---------------------------------------------------------------
+# Optional, and it runs the same two tools you would run by hand - the scene
+# builder is a convenience over them, never a second way of doing it.
+if BOAT:
+    import runpy
+    import sys
+    from pathlib import Path as _Path
+
+    tools = _Path("/home/asv/dev/multi_modal_wave_sim/tools")
+    if "__file__" in dir():
+        tools = _Path(__file__).resolve().parent
+
+    defaults = {"planing": 771.0, "wigley": 1406.0}
+    if BOAT not in defaults:
+        raise ValueError(f"BOAT must be 'planing' or 'wigley', got {BOAT!r}")
+
+    print()
+    print(f"  building the {BOAT} hull")
+    g = globals()
+    g["HULL_TYPE"] = BOAT
+    exec(open(tools / "make_hull.py").read(), g)
+    g["HULL"] = g["OUT"]
+    g["MASS"] = float(MASS) if MASS else defaults[BOAT]
+    exec(open(tools / "load_hull.py").read(), g)
+
 print()
 print("  the water is dark on purpose: a sea is mostly a mirror, so almost")
 print("  everything you see in it is the sky. Make the water bright and it")
-print("  stops reflecting and starts looking like plastic.")
+print("  stops reflecting and starts looking like plastic. BRIGHTNESS turns")
+print("  the sky down, and the sea follows it - that is the whole exposure.")

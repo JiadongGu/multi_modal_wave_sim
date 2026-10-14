@@ -94,6 +94,53 @@ class SpectrumPanel:
                         lambda m, a=attr: self._show(a, m.get_value_as_float()))
                     slider.model.add_end_edit_fn(lambda m: self.apply())
 
+            ui.Spacer(height=8)
+            ui.Label("surface", height=20,
+                     style={"font_size": 14, "color": 0xFFCCCCCC})
+            # Not spectrum parameters: these change the field, not the sea
+            # state, so they are set on the live field rather than going
+            # through select(). Rebuilding for a visual knob would reseed the
+            # waves under a floating hull for no reason.
+            with ui.HStack(height=24, spacing=6):
+                ui.Label("choppiness", width=70,
+                         tooltip="horizontal displacement toward the crests. "
+                                 "0 is a plain height field, 1 is standard, "
+                                 "past ~1.5 the surface folds through itself. "
+                                 "Visual only - height() is untouched")
+                chop = ui.FloatSlider(min=0.0, max=2.0)
+                self._chop = chop
+                self._chop_label = ui.Label("", width=74,
+                                            style={"color": 0xFFAAAAAA})
+                chop.model.add_value_changed_fn(
+                    lambda m: setattr(self._chop_label, "text",
+                                      f"{m.get_value_as_float():.2f}"))
+                chop.model.add_end_edit_fn(lambda m: self._set_surface())
+
+            with ui.HStack(height=24, spacing=6):
+                ui.Label("foam at", width=70,
+                         tooltip="Jacobian below which the surface counts as "
+                                 "broken. 1 is flat water, 0 is a fold. Lower "
+                                 "means only the steepest crests go white")
+                foam = ui.FloatSlider(min=0.0, max=1.0)
+                self._foam = foam
+                self._foam_label = ui.Label("", width=74,
+                                            style={"color": 0xFFAAAAAA})
+                foam.model.add_value_changed_fn(
+                    lambda m: setattr(self._foam_label, "text",
+                                      f"{m.get_value_as_float():.2f}"))
+                foam.model.add_end_edit_fn(lambda m: self._set_surface())
+
+            with ui.HStack(height=24, spacing=6):
+                ui.Label("grid", width=70,
+                         tooltip="draw the FFT grid lines on the surface - "
+                                 "shows the resolution you are working at, "
+                                 "and the horizontal drag a shaded sheet hides")
+                self._grid = ui.CheckBox(width=20)
+                self._grid.model.add_value_changed_fn(
+                    lambda m: setattr(self._ext, "show_grid",
+                                      bool(m.get_value_as_bool())))
+                ui.Label("show wave grid", style={"color": 0xFFAAAAAA})
+
             ui.Spacer(height=6)
             with ui.HStack(height=26, spacing=6):
                 ui.Button("Apply", clicked_fn=self.apply, width=80)
@@ -109,6 +156,21 @@ class SpectrumPanel:
                                             "color": 0xFF99CC99})
 
     # ------------------------------------------------------------------- state
+
+    def _set_surface(self) -> None:
+        """Push the visual knobs onto the live field, without rebuilding it.
+
+        choppiness and foam_threshold are read fresh every advance(), so
+        setting them takes effect on the next step with no reseeding - unlike
+        a spectrum change, which has to rebuild h0.
+        """
+        field = getattr(self._ext, "field", None)
+        if field is None:
+            return
+        if hasattr(field, "choppiness"):
+            field.choppiness = self._chop.model.get_value_as_float()
+            field.foam_threshold = self._foam.model.get_value_as_float()
+        self._report()
 
     def _show(self, attr, value) -> None:
         label, unit = self._value_labels[attr]
@@ -136,6 +198,15 @@ class SpectrumPanel:
             value = min(max(float(value), lo), hi)
             self._sliders[attr].model.set_value(value)
             self._show(attr, value)
+
+        field = getattr(self._ext, "field", None)
+        chop = float(getattr(field, "choppiness", 0.0))
+        thr = float(getattr(field, "foam_threshold", 0.55))
+        self._chop.model.set_value(chop)
+        self._foam.model.set_value(thr)
+        self._chop_label.text = f"{chop:.2f}"
+        self._foam_label.text = f"{thr:.2f}"
+        self._grid.model.set_value(bool(getattr(self._ext, "show_grid", False)))
         self._report()
 
     def apply(self) -> None:
@@ -149,7 +220,9 @@ class SpectrumPanel:
             if self._readout:
                 self._readout.text = f"rejected: {exc}"
             return
-        self._report()
+        # select() rebuilt the field, so it came back with the class defaults.
+        # Put the sliders' values back or the panel and the water disagree.
+        self._set_surface()
 
     def _report(self) -> None:
         """What the water ACTUALLY is, which is not always what was asked for.
