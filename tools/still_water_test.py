@@ -48,6 +48,10 @@ ext = E.get()
 if ext is None:
     raise RuntimeError("extension is not enabled - turn on mmws.wave_sim first")
 
+# This stage is ours now. The extension writes to no other one,
+# so pressing play in an unrelated file does nothing.
+ext.activate()
+
 stage = omni.usd.get_context().get_stage()
 prim = stage.GetPrimAtPath(VESSEL)
 if not prim:

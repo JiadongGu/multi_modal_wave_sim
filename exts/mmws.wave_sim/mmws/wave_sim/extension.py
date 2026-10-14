@@ -125,6 +125,15 @@ class MultiModalWaveSimExtension(_ExtBase):
         self.show_grid = False
         self._grid_stride = 8
         self._grid_drawn = False
+        # Nothing is written to any stage until something asks for it.
+        #
+        # Kit enables an extension globally, so without this the first Play in
+        # ANY scene gets a 256 m sheet of water dropped into it. The tools
+        # call activate(), which also remembers WHICH stage they set up - open
+        # a different file and the extension stands down by itself rather than
+        # redecorating someone else's work.
+        self.active = False
+        self._stage_id = None
         # Per-face force arrows, off by default.
         self.show_forces = False
         self._forces_drawn = False
@@ -165,7 +174,7 @@ class MultiModalWaveSimExtension(_ExtBase):
 
         self._subscribe()
         self.show_ui()
-        self._log("ready", BANNER_LEVEL)
+        self._log("ready - standing by. A tool or the panel checkbox activates it", BANNER_LEVEL)
 
     def on_shutdown(self) -> None:
         global _INSTANCE
@@ -255,6 +264,51 @@ class MultiModalWaveSimExtension(_ExtBase):
                 pass
             finally:
                 self._in_select = False
+
+    # ----------------------------------------------------------------- scoping
+
+    def activate(self, enable: bool = True) -> None:
+        """Start (or stop) touching the current stage.
+
+        The tools call this, so the normal workflow never has to. Call it by
+        hand to adopt a stage you built yourself, or activate(False) to leave
+        a scene alone without disabling the extension.
+        """
+        self.active = bool(enable)
+        self._stage_id = self._current_stage_id() if enable else None
+        if not enable:
+            self.vessel = None
+        self._log("active on this stage" if enable else "standing down",
+                  BANNER_LEVEL)
+
+    @staticmethod
+    def _current_stage_id():
+        try:
+            import omni.usd
+
+            stage = omni.usd.get_context().get_stage()
+            return stage.GetRootLayer().identifier if stage else None
+        except Exception:                             # noqa: BLE001
+            return None
+
+    def _stage_is_ours(self) -> bool:
+        """False once a different file is open, and say so exactly once.
+
+        Comparing the root layer identifier rather than the stage object: Kit
+        can hand back a different wrapper for the same stage, and a new file
+        always has a new identifier. Checked every step because it has to be
+        right on the first one after a file opens, and it is a string compare.
+        """
+        if self._stage_id is None:
+            return False
+        if self._current_stage_id() == self._stage_id:
+            return True
+        self.active = False
+        self._stage_id = None
+        self.vessel = None
+        self._log("a different stage is open - standing down. activate() to "
+                  "adopt this one.", BANNER_LEVEL)
+        return False
 
     # ------------------------------------------------------------- diagnostics
 
@@ -723,7 +777,9 @@ class MultiModalWaveSimExtension(_ExtBase):
             import omni.timeline
 
             if event.type == int(omni.timeline.TimelineEventType.PLAY):
-                if self.vessel is None:
+                # Only if this is the stage we were set up on. Pressing play
+                # in an unrelated scene must do nothing at all.
+                if self.active and self._stage_is_ours() and self.vessel is None:
                     self.bind_vessel()
             if event.type == int(omni.timeline.TimelineEventType.STOP):
                 self._step_count = 0
@@ -759,6 +815,9 @@ class MultiModalWaveSimExtension(_ExtBase):
             4. sum thrusters and the rest  -> tau
             5. write to PhysxForceAPI      (body frame)
         """
+        if not self.active or not self._stage_is_ours():
+            return
+
         self._step_count += 1
         self._sim_time += dt
 

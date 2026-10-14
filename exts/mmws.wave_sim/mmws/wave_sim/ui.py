@@ -74,6 +74,17 @@ class SpectrumPanel:
     def _build(self) -> None:
         ui = self._ui
         with ui.VStack(spacing=6, height=0):
+            with ui.HStack(height=24, spacing=6):
+                self._active = ui.CheckBox(width=20)
+                self._active.model.add_value_changed_fn(
+                    lambda m: self._ext.activate(bool(m.get_value_as_bool())))
+                ui.Label("active on this stage", height=22,
+                         tooltip="off means the extension touches nothing. It "
+                                 "turns itself off when a different file is "
+                                 "opened, so pressing play elsewhere never "
+                                 "drops water into someone else's scene",
+                         style={"font_size": 14, "color": 0xFFCCCCCC})
+            ui.Separator(height=6)
             ui.Label("JONSWAP spectrum", height=22,
                      style={"font_size": 16, "color": 0xFFCCCCCC})
             ui.Label("sliders apply when you release them", height=16,
@@ -285,6 +296,7 @@ class SpectrumPanel:
         self._foam.model.set_value(thr)
         self._chop_label.text = f"{chop:.2f}"
         self._foam_label.text = f"{thr:.2f}"
+        self._active.model.set_value(bool(getattr(self._ext, "active", False)))
         self._grid.model.set_value(bool(getattr(self._ext, "show_grid", False)))
         self._follow.model.set_value(bool(getattr(self._ext, "follow", False)))
         self._arrows.model.set_value(bool(getattr(self._ext, "show_forces", False)))

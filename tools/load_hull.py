@@ -328,6 +328,10 @@ import mmws.wave_sim.extension as E
 
 ext = E.get()
 centre = ext.field.tile_size / 2.0 if (ext and ext.field) else 64.0
+# This stage is ours now. Until something says so the extension writes to no
+# stage at all, so pressing play in an unrelated file leaves it untouched.
+if ext is not None:
+    ext.activate()
 # The superstructure rides as a CHILD of the vessel, so it inherits every
 # transform PhysX writes without being part of the body in any other way: no
 # collider, no mass, never seen by the force model.
