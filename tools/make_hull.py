@@ -50,22 +50,43 @@ pkg = here.parent / "exts" / "mmws.wave_sim"
 if str(pkg) not in sys.path:
     sys.path.insert(0, str(pkg))
 
-from mmws.wave_sim.forces.hulls import wigley_hull
+from mmws.wave_sim.forces.hulls import planing_hull, wigley_hull
 from mmws.wave_sim.integration.repair import repair
 
-OUT = globals().get("OUT", "/tmp/wigley_hull.usda")
-LENGTH = float(globals().get("LENGTH", 6.10))     # waterline length
-BEAM = float(globals().get("BEAM", 2.72))         # waterline beam
-DEPTH = float(globals().get("DEPTH", 0.60))       # canoe body depth
+# "wigley"  - the analytic benchmark hull. Sailing-yacht-ish, and the one with
+#             published towing tank data (Journee 1992).
+# "planing" - a warped-V outboard runabout, from principal dimensions. The
+#             defaults are a Boston Whaler 170 Montauk: 5.28 x 2.21 m, 16 deg
+#             of deadrise at the transom, 771 kg dry, 0.30 m published draft.
+HULL_TYPE = str(globals().get("HULL_TYPE", "wigley")).lower()
+_WHALER = HULL_TYPE == "planing"
+
+OUT = globals().get("OUT", f"/tmp/{HULL_TYPE}_hull.usda")
+LENGTH = float(globals().get("LENGTH", 5.28 if _WHALER else 6.10))
+BEAM = float(globals().get("BEAM", 2.21 if _WHALER else 2.72))
+DEPTH = float(globals().get("DEPTH", 0.60))
+STATIONS = int(globals().get("STATIONS", 41))
+SECTIONS = int(globals().get("SECTIONS", 7 if _WHALER else 17))
+# wigley only
 FULLNESS = float(globals().get("FULLNESS", 1.0))
 TAPER = float(globals().get("TAPER", 1.0))
-STATIONS = int(globals().get("STATIONS", 41))
-SECTIONS = int(globals().get("SECTIONS", 17))
+# planing only
+DEADRISE_TRANSOM = float(globals().get("DEADRISE_TRANSOM", 16.0))
+DEADRISE_BOW = float(globals().get("DEADRISE_BOW", 50.0))
 
-vertices, triangles = wigley_hull(
-    length=LENGTH, beam=BEAM, depth=DEPTH, stations=STATIONS,
-    sections=SECTIONS, fullness=FULLNESS, taper=TAPER,
-)
+if _WHALER:
+    vertices, triangles = planing_hull(
+        length=LENGTH, beam=BEAM, depth=DEPTH, stations=STATIONS,
+        sections=SECTIONS, deadrise_transom=DEADRISE_TRANSOM,
+        deadrise_bow=DEADRISE_BOW,
+    )
+elif HULL_TYPE == "wigley":
+    vertices, triangles = wigley_hull(
+        length=LENGTH, beam=BEAM, depth=DEPTH, stations=STATIONS,
+        sections=SECTIONS, fullness=FULLNESS, taper=TAPER,
+    )
+else:
+    raise ValueError(f"HULL_TYPE must be 'wigley' or 'planing', got {HULL_TYPE!r}")
 # Round-trip through the same repair the bridge uses, so what gets written is
 # what the force model would have seen anyway.
 vertices, triangles, report = repair([(vertices, triangles)])
@@ -84,12 +105,16 @@ stage.GetRootLayer().Save()
 
 print()
 print(f"  wrote {OUT}")
-print(f"    waterline      {LENGTH:.2f} x {BEAM:.2f} m, canoe body depth {DEPTH:.2f} m")
+print(f"    type           {HULL_TYPE}")
+print(f"    dimensions     {LENGTH:.2f} x {BEAM:.2f} m, depth {DEPTH:.2f} m"
+      + (f", deadrise {DEADRISE_TRANSOM:.0f}-{DEADRISE_BOW:.0f} deg" if _WHALER else ""))
 print(f"    mesh           {report['vertices']} pts, {report['triangles']} tris, "
       f"watertight={report['watertight']}")
 print(f"    hull volume    {report['volume']:.3f} m^3")
 print(f"    Cb             {report['volume'] / block:.3f}   "
-      f"(classic Wigley is 0.444; a yacht canoe body is finer)")
+      + ("(a planing hull's block coefficient is low: it is mostly air above "
+         "the chine)" if _WHALER else
+         "(classic Wigley is 0.444; a yacht canoe body is finer)"))
 print()
 print("    full displacement at this depth:")
 for rho, label in ((1000.0, "fresh"), (1025.0, "sea")):

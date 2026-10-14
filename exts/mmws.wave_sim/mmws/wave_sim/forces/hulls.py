@@ -118,3 +118,103 @@ def wigley_hull(length: float = 6.10, beam: float = 2.72, depth: float = 0.60,
                 triangles.append((centre, base + k2, base + k))
 
     return vertices, np.array(triangles, dtype=int)
+
+
+def planing_hull(length: float = 5.28, beam: float = 2.21, depth: float = 0.60,
+                 deadrise_transom: float = 16.0, deadrise_bow: float = 50.0,
+                 keel_rise: float = 0.55, sheer_rise: float = 0.30,
+                 flare: float = 1.05, fullness: float = 0.45,
+                 stations: int = 41, sections: int = 7,
+                 bow_fraction: float = 0.985):
+    """A warped-V planing hull from principal dimensions. (vertices, triangles).
+
+    Built for a small outboard runabout - a Boston Whaler 170 Montauk is
+    5.28 x 2.21 m with 16 degrees of deadrise at the transom - but it is a
+    hull form, not that boat. Nobody publishes offsets for a production hull,
+    so this is the standard shape generated to the published dimensions, in
+    the same spirit as wigley_hull: watertight by construction, no file to
+    download, and a draft that can be checked against the maker's figure.
+
+    The geometry each station carries
+    ---------------------------------
+    Three points define half a section, and everything else is interpolation:
+
+        keel    (y=0, low)      the centreline, rising toward the bow
+        chine   the hard corner where the V bottom meets the topsides
+        sheer   the deck edge, rising toward the bow
+
+    `deadrise` is the angle of the V from horizontal, and it is WARPED: 16
+    degrees at the transom opening out to 50 at the bow. That is what makes a
+    planing boat work - flat aft to lift onto the plane, deep forward to cut
+    chop instead of slamming - and it is the single most consequential number
+    in the shape.
+
+    The chine is clamped below the sheer, which is also what real hulls do:
+    forward, the chine runs out and merges into the stem, so there is no
+    corner left at the bow.
+
+    Caps: the transom is a genuine flat face, so its ring is capped as-is. The
+    bow would taper to a zero-width line, which has no usable normal, so the
+    stations stop at `bow_fraction` and leave a small stem face - under 2% of
+    the length, and real boats have a stem band there anyway.
+    """
+    if not 0.0 < bow_fraction <= 1.0:
+        raise ValueError(f"bow_fraction must be in (0, 1], got {bow_fraction}")
+    if stations < 3 or sections < 2:
+        raise ValueError("need at least 3 stations and 2 sections")
+
+    # `beam` is the widest part of the boat, which is the deck edge, not the
+    # chine - the topsides flare outward above it. Divide the flare back out
+    # so the hull measures what was asked for rather than `flare` times it.
+    half_b = beam / 2.0 / flare
+    t = np.linspace(0.0, bow_fraction, stations)        # 0 transom, 1 bow
+
+    # Plan view: full aft, fining toward the bow.
+    half_width = half_b * (1.0 - t ** 3) ** fullness
+    # Warped V: flat aft, deep forward.
+    deadrise = np.radians(deadrise_transom
+                          + (deadrise_bow - deadrise_transom) * t ** 1.6)
+    keel_z = -depth + keel_rise * depth * t ** 2.2
+    sheer_z = sheer_rise * depth * t ** 2.0
+    chine_z = keel_z + half_width * np.tan(deadrise)
+    # Forward the chine runs out into the stem; without this it climbs above
+    # the deck and the section turns inside out.
+    chine_z = np.minimum(chine_z, sheer_z - 0.04 * depth)
+
+    # Half a section: sheer -> chine down the topside, chine -> keel down the V.
+    topside = np.linspace(0.0, 1.0, sections)[:-1]      # excludes the chine
+    bottom = np.linspace(0.0, 1.0, sections)            # includes keel at 1
+
+    rings = []
+    for i in range(stations):
+        x = float(t[i]) * length
+        w, sz, cz, kz = (float(half_width[i]), float(sheer_z[i]),
+                         float(chine_z[i]), float(keel_z[i]))
+        starboard = []
+        for f in topside:                               # deck edge down to chine
+            starboard.append((x, w * (flare + (1.0 - flare) * f), sz + (cz - sz) * f))
+        for f in bottom:                                # chine down to the keel
+            starboard.append((x, w * (1.0 - f), cz + (kz - cz) * f))
+        port = [(px, -py, pz) for px, py, pz in reversed(starboard[:-1])]
+        rings.append(np.array(starboard + port, dtype=float))
+
+    ring_size = len(rings[0])
+    vertices = np.concatenate(rings, axis=0)
+    triangles = []
+    for i in range(stations - 1):
+        base, nxt = i * ring_size, (i + 1) * ring_size
+        for k in range(ring_size):
+            k2 = (k + 1) % ring_size        # the wrap is the deck panel
+            triangles.append((base + k, base + k2, nxt + k2))
+            triangles.append((base + k, nxt + k2, nxt + k))
+
+    for i, flip in ((0, 0), (stations - 1, 1)):
+        base = i * ring_size
+        centre = len(vertices)
+        vertices = np.vstack([vertices, rings[i].mean(axis=0)])
+        for k in range(ring_size):
+            k2 = (k + 1) % ring_size
+            triangles.append((centre, base + k, base + k2) if flip
+                             else (centre, base + k2, base + k))
+
+    return vertices, np.array(triangles, dtype=int)
