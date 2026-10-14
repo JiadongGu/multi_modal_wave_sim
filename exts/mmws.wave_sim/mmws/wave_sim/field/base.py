@@ -146,10 +146,64 @@ class WaveField(ABC):
         counts = np.full((N-1) ** 2, 4, dtype = np.int32) #vertice counts
         return counts, quads.ravel().astype(np.int32)
 
+    def write_grid(self, stage=None, prim_path: str = "/World/WaterGrid",
+                   stride: int = 8, visible: bool = True):
+        """Draw every `stride`-th grid line as curves following the surface.
+
+        The water renders as a shaded sheet, which hides what the field is
+        actually made of. These are the FFT grid lines themselves, lifted (and
+        displaced, when choppiness is on) with the water - so you can see the
+        resolution you are working at, watch the tile wrap, and see the
+        horizontal drag toward the crests that a shaded surface disguises.
+
+        Curves rather than a wireframe draw mode: USD has no per-prim
+        wireframe, and this way the lines are real geometry with a width that
+        does not change as the camera moves.
+        """
+        if stage is None:
+            return None
+        from pxr import Sdf, UsdGeom, Vt
+
+        curves = UsdGeom.BasisCurves.Get(stage, prim_path)
+        if not curves:
+            curves = UsdGeom.BasisCurves.Define(stage, prim_path)
+            curves.CreateTypeAttr().Set("linear")
+            curves.CreateWidthsAttr().SetMetadata("interpolation", "constant")
+            UsdGeom.PrimvarsAPI(curves).CreatePrimvar(
+                "displayColor", Sdf.ValueTypeNames.Color3fArray,
+                UsdGeom.Tokens.constant).Set(Vt.Vec3fArray([(0.95, 0.95, 1.0)]))
+
+        UsdGeom.Imageable(curves).GetVisibilityAttr().Set(
+            UsdGeom.Tokens.inherited if visible else UsdGeom.Tokens.invisible)
+        if not visible:
+            return curves
+
+        N = self.resolution
+        stride = max(1, int(stride))
+        grid = self.mesh_points().reshape(N, N, 3)
+        lines = [grid[i, :, :] for i in range(0, N, stride)]
+        lines += [grid[:, j, :] for j in range(0, N, stride)]
+        points = np.concatenate(lines, axis=0)
+        curves.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(points.astype(np.float32)))
+        curves.CreateCurveVertexCountsAttr().Set(
+            Vt.IntArray([N] * len(lines)))
+        curves.GetWidthsAttr().Set(Vt.FloatArray([self.cell_size * 0.06]))
+        return curves
+
+    def vertex_colors(self):
+        """Per-point RGB for the surface, or None to leave it unshaded.
+
+        A hook, not a feature: most fields have nothing to say about colour,
+        but a field that knows where it has broken (FftWaveField, via the
+        Jacobian of its displacement) can return foam here and have write_mesh
+        carry it without the mesh code knowing what foam is.
+        """
+        return None
+
     def write_mesh(self, stage=None, prim_path: str = "/World/Water"):
         if stage is None:
             return None
-        from pxr import Gf, UsdGeom, Vt #IGNORE THIS FLAG, PXR IS INSTALLED IN ISAACSIM
+        from pxr import Gf, Sdf, UsdGeom, Vt #IGNORE THIS FLAG, PXR IS INSTALLED IN ISAACSIM
 
         mesh = UsdGeom.Mesh.Get(stage,prim_path) #fetch mesh if it exists
         if not mesh:
@@ -179,6 +233,20 @@ class WaveField(ABC):
             mesh.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(indices))
 
         mesh.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(pts))
+
+        colors = self.vertex_colors()
+        if colors is not None:
+            # "vertex" interpolation: one colour per point, interpolated
+            # across each face. The alternative, "constant", would paint the
+            # whole sea one colour and the foam would vanish.
+            primvars = UsdGeom.PrimvarsAPI(mesh)
+            pv = primvars.GetPrimvar("displayColor")
+            if not pv:
+                pv = primvars.CreatePrimvar(
+                    "displayColor", Sdf.ValueTypeNames.Color3fArray,
+                    UsdGeom.Tokens.vertex)
+            pv.Set(Vt.Vec3fArray.FromNumpy(
+                np.asarray(colors, dtype=np.float32)))
         # Hydra culls against the extent. A stale one hides parts of the
         # surface, which looks like another meshing bug.
         lo, hi = pts.min(axis=0), pts.max(axis=0)

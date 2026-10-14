@@ -275,7 +275,8 @@ def test_fft_stays_bounded():
 
 
 def test_mesh_points_shape_and_spacing():
-    f = _fft(N=32)
+    """A plain height field is an evenly spaced grid. Choppiness off."""
+    f = _fft(N=32, choppiness=0.0)
     pts = f.mesh_points()
     N = f.resolution
     assert pts.shape == (N * N, 3), f"expected {(N*N, 3)}, got {pts.shape}"
@@ -284,11 +285,89 @@ def test_mesh_points_shape_and_spacing():
 
 
 def test_mesh_points_match_height():
-    """The mesh and the physics must read the same surface - that is the design."""
-    f = _fft(N=32)
+    """The mesh and the physics must read the same surface - that is the design.
+
+    True of a HEIGHT field. Horizontal displacement deliberately breaks it, so
+    the invariant is asserted where it is meant to hold, and the choppy case
+    gets its own tests below.
+    """
+    f = _fft(N=32, choppiness=0.0)
     pts = f.mesh_points()
     z = np.asarray(f.height(pts[:, 0], pts[:, 1]))
     assert np.allclose(pts[:, 2], z), "mesh z does not match height() at the same xy"
+
+
+def test_choppiness_does_not_touch_height():
+    """Choppiness is a visual setting. The physics must not be able to tell.
+
+    The force model queries height(x, y). If a rendering knob moved that, the
+    hull would float differently depending on how pretty the water was.
+    """
+    a, b = _fft(N=32, choppiness=0.0), _fft(N=32, choppiness=1.5)
+    a.advance(3.0)
+    b.advance(3.0)
+    rng = np.random.default_rng(7)
+    xy = rng.uniform(0.0, a.tile_size, size=(2, 400))
+    diff = float(np.abs(np.asarray(a.height(*xy)) - np.asarray(b.height(*xy))).max())
+    assert diff == 0.0, f"choppiness changed height() by {diff:.3e} m"
+
+
+def test_choppiness_conserves_water():
+    """Displacement moves water sideways; it must not create or destroy any.
+
+    The mean of the displacement over a full tile is the net transport, and a
+    periodic surface has nowhere to transport it to - so it must be zero.
+    """
+    f = _fft(N=32, choppiness=1.0)
+    f.advance(3.0)
+    pts = f.mesh_points()
+    flat = _fft(N=32, choppiness=0.0)
+    flat.advance(3.0)
+    base = flat.mesh_points()
+    for axis, name in ((0, "x"), (1, "y")):
+        mean = float(np.abs((pts[:, axis] - base[:, axis]).mean()))
+        assert mean < 1e-9, f"net {name} displacement {mean:.3e} m, want 0"
+
+
+def test_choppiness_displaces_toward_crests():
+    """Water should pile INTO the crests, which is what sharpens them.
+
+    Points whose displacement carries them uphill outnumber those carried
+    downhill, so the correlation between displacement and surface slope is
+    negative - D points against the gradient, toward the peak.
+    """
+    f = _fft(N=32, choppiness=1.0)
+    f.advance(3.0)
+    z = f._z
+    gx, gy = np.gradient(z, f.cell_size)
+    corr = float((f._dx * gx + f._dy * gy).mean())
+    assert corr < 0.0, f"displacement is not toward the crests (corr {corr:+.4f})"
+
+
+def test_foam_only_in_steep_seas():
+    """Long low swell does not break; short steep waves do.
+
+    Resolution matters here and it is worth knowing why: a fold is made by
+    the SHORT components riding the long ones, so a grid too coarse to carry
+    them reports a glassy sea no matter how steep it is. At a 512 m tile with
+    64 points the cells are 8 m, a 39 m wave is five cells across, and nothing
+    breaks. 2 m cells show the whitecaps. If foam disappears when you expected
+    it, suspect the cell size before the threshold.
+    """
+    # Built explicitly: _fft() fixes the spectrum, and FftWaveField swallows
+    # unknown kwargs, so passing hs/tp through it would silently do nothing.
+    def field(hs, tp):
+        return FIELDS.create("fft", spectrum=SPECTRA.create("jonswap", hs=hs, tp=tp),
+                             tile_size=256.0, resolution=128, choppiness=1.0)
+
+    swell = field(2.0, 12.0)      # 225 m long, steepness 0.009
+    steep = field(3.0, 5.0)       # 39 m long, steepness 0.077
+    swell.advance(5.0)
+    steep.advance(5.0)
+    calm_frac = float((swell._foam > 0).mean())
+    rough_frac = float((steep._foam > 0).mean())
+    assert calm_frac == 0.0, f"swell should not break, got {100*calm_frac:.2f}% foam"
+    assert rough_frac > 0.0, "a steep sea should produce whitecaps somewhere"
 
 
 def test_mesh_topology_valid():
@@ -744,6 +823,10 @@ TESTS = [
     ("FFT: still bounded after 10 min", test_fft_stays_bounded, True),
     ("mesh: point shape and spacing", test_mesh_points_shape_and_spacing, True),
     ("mesh: z matches height()", test_mesh_points_match_height, True),
+    ("choppiness: height() unchanged", test_choppiness_does_not_touch_height, True),
+    ("choppiness: conserves water", test_choppiness_conserves_water, True),
+    ("choppiness: displaces toward crests", test_choppiness_displaces_toward_crests, True),
+    ("foam: only in steep seas", test_foam_only_in_steep_seas, True),
     ("mesh: topology is valid", test_mesh_topology_valid, True),
     ("mesh: topology is static", test_mesh_topology_is_static, True),
     ("mesh: winding faces up", test_mesh_winding_faces_up, True),

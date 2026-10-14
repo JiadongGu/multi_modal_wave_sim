@@ -121,6 +121,10 @@ class MultiModalWaveSimExtension(_ExtBase):
         self._field_kwargs = {}
         self._panel = None
         self._in_select = False
+        # Grid overlay, off by default: it is a diagnostic, not scenery.
+        self.show_grid = False
+        self._grid_stride = 8
+        self._grid_drawn = False
         # Per-step CSV capture, off unless record() turns it on.
         self._csv = None
         self._csv_writer = None
@@ -458,7 +462,14 @@ class MultiModalWaveSimExtension(_ExtBase):
             if(self._sim_time - self._last_draw >= 1.0 / 20.0): #throttle limits how often the mesh is redrawn. 20Hz
                 self._last_draw = self._sim_time
                 import omni.usd
-                self.field.write_mesh(omni.usd.get_context().get_stage())
+                stage = omni.usd.get_context().get_stage()
+                self.field.write_mesh(stage)
+                # Drawn on the same throttle as the water, so the lines never
+                # lag the surface they are supposed to be lying on.
+                if self.show_grid or self._grid_drawn:
+                    self.field.write_grid(stage, stride=self._grid_stride,
+                                          visible=self.show_grid)
+                    self._grid_drawn = self.show_grid
 
         if self.vessel is not None and self.force_model is not None and self.field is not None:
             try:
