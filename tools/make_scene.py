@@ -6,7 +6,7 @@ Optional, before the exec:
 
     SUN_ELEV, SUN_AZ = 58.0, 135.0     # degrees above the horizon, and heading
     BRIGHTNESS = 0.45                  # the whole scene's exposure, see below
-    BOAT = "planing"                   # also build and load a hull
+    BOAT = "survey"                    # "planing", "wigley" or "survey"
     MASS = 771.0                       # kg; defaults per hull type
 
 Why the sky is generated and not downloaded
@@ -206,9 +206,10 @@ if vessel:
 # Optional, and it runs the same two tools you would run by hand - the scene
 # builder is a convenience over them, never a second way of doing it.
 if BOAT:
-    defaults = {"planing": 771.0, "wigley": 1406.0}
+    defaults = {"planing": 771.0, "wigley": 1406.0, "survey": 245_000.0}
     if BOAT not in defaults:
-        raise ValueError(f"BOAT must be 'planing' or 'wigley', got {BOAT!r}")
+        raise ValueError(
+            f"BOAT must be 'planing', 'wigley' or 'survey', got {BOAT!r}")
 
     print()
     print(f"  building the {BOAT} hull")

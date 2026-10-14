@@ -48,7 +48,8 @@ from pathlib import Path
 # it on sys.path. Deriving a path from __file__ here would point at Kit's
 # throwaway /tmp/carb.XXXX/script_NNN.py instead.
 
-from mmws.wave_sim.forces.hulls import planing_hull, wigley_hull
+from mmws.wave_sim.forces.hulls import (displacement_hull, planing_hull,
+                                        superstructure, wigley_hull)
 from mmws.wave_sim.integration.repair import repair
 
 # "wigley"  - the analytic benchmark hull. Sailing-yacht-ish, and the one with
@@ -56,15 +57,23 @@ from mmws.wave_sim.integration.repair import repair
 # "planing" - a warped-V outboard runabout, from principal dimensions. The
 #             defaults are a Boston Whaler 170 Montauk: 5.28 x 2.21 m, 16 deg
 #             of deadrise at the transom, 771 kg dry, 0.30 m published draft.
+# "survey"  - a round-bilge displacement hull with a deckhouse, bridge, mast
+#             and stern A-frame. Defaults are the Portuguese Andromeda class
+#             coastal hydrographic vessel: 31.5 x 7.7 m, 4.6 m depth, 245 t.
 HULL_TYPE = str(globals().get("HULL_TYPE", "wigley")).lower()
 _WHALER = HULL_TYPE == "planing"
+_SURVEY = HULL_TYPE == "survey"
+
+_L = {"planing": 5.28, "survey": 31.5}.get(HULL_TYPE, 6.10)
+_B = {"planing": 2.21, "survey": 7.7}.get(HULL_TYPE, 2.72)
+_D = {"survey": 4.6}.get(HULL_TYPE, 0.60)
 
 OUT = globals().get("OUT", f"/tmp/{HULL_TYPE}_hull.usda")
-LENGTH = float(globals().get("LENGTH", 5.28 if _WHALER else 6.10))
-BEAM = float(globals().get("BEAM", 2.21 if _WHALER else 2.72))
-DEPTH = float(globals().get("DEPTH", 0.60))
-STATIONS = int(globals().get("STATIONS", 41))
-SECTIONS = int(globals().get("SECTIONS", 7 if _WHALER else 17))
+LENGTH = float(globals().get("LENGTH", _L))
+BEAM = float(globals().get("BEAM", _B))
+DEPTH = float(globals().get("DEPTH", _D))
+STATIONS = int(globals().get("STATIONS", 45 if _SURVEY else 41))
+SECTIONS = int(globals().get("SECTIONS", 13 if _SURVEY else (7 if _WHALER else 17)))
 # wigley only
 FULLNESS = float(globals().get("FULLNESS", 1.0))
 TAPER = float(globals().get("TAPER", 1.0))
@@ -72,7 +81,17 @@ TAPER = float(globals().get("TAPER", 1.0))
 DEADRISE_TRANSOM = float(globals().get("DEADRISE_TRANSOM", 16.0))
 DEADRISE_BOW = float(globals().get("DEADRISE_BOW", 50.0))
 
-if _WHALER:
+extra = None
+if _SURVEY:
+    vertices, triangles = displacement_hull(
+        length=LENGTH, beam=BEAM, depth=DEPTH, stations=STATIONS,
+        sections=SECTIONS,
+    )
+    # Written as a SEPARATE prim. Merged into the hull it would corrupt the
+    # enclosed volume and the centroid everything else is measured from, and
+    # it is above the waterline so it displaces nothing anyway.
+    extra = superstructure(length=LENGTH, beam=BEAM, depth=DEPTH)
+elif _WHALER:
     vertices, triangles = planing_hull(
         length=LENGTH, beam=BEAM, depth=DEPTH, stations=STATIONS,
         sections=SECTIONS, deadrise_transom=DEADRISE_TRANSOM,
@@ -84,7 +103,8 @@ elif HULL_TYPE == "wigley":
         sections=SECTIONS, fullness=FULLNESS, taper=TAPER,
     )
 else:
-    raise ValueError(f"HULL_TYPE must be 'wigley' or 'planing', got {HULL_TYPE!r}")
+    raise ValueError(
+        f"HULL_TYPE must be 'wigley', 'planing' or 'survey', got {HULL_TYPE!r}")
 # Round-trip through the same repair the bridge uses, so what gets written is
 # what the force model would have seen anyway.
 vertices, triangles, report = repair([(vertices, triangles)])
@@ -99,6 +119,17 @@ mesh.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(vertices.astype(np.float32)))
 mesh.CreateFaceVertexCountsAttr(Vt.IntArray.FromNumpy(np.full(len(triangles), 3, np.int32)))
 mesh.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(triangles.ravel().astype(np.int32)))
 mesh.CreateSubdivisionSchemeAttr().Set("none")
+
+if extra is not None:
+    # /Super, next to /Hull. load_hull.py keeps them apart by name: the hull
+    # is integrated over, the superstructure is only ever rendered.
+    sv, sf = extra
+    sup = UsdGeom.Mesh.Define(stage, "/Super")
+    sup.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(sv.astype(np.float32)))
+    sup.CreateFaceVertexCountsAttr(Vt.IntArray.FromNumpy(np.full(len(sf), 3, np.int32)))
+    sup.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(sf.ravel().astype(np.int32)))
+    sup.CreateSubdivisionSchemeAttr().Set("none")
+
 stage.GetRootLayer().Save()
 
 print()
@@ -106,6 +137,9 @@ print(f"  wrote {OUT}")
 print(f"    type           {HULL_TYPE}")
 print(f"    dimensions     {LENGTH:.2f} x {BEAM:.2f} m, depth {DEPTH:.2f} m"
       + (f", deadrise {DEADRISE_TRANSOM:.0f}-{DEADRISE_BOW:.0f} deg" if _WHALER else ""))
+if extra is not None:
+    print(f"    superstructure {len(extra[0])} pts, {len(extra[1])} tris  "
+          f"(/Super - visual only, never integrated over)")
 print(f"    mesh           {report['vertices']} pts, {report['triangles']} tris, "
       f"watertight={report['watertight']}")
 print(f"    hull volume    {report['volume']:.3f} m^3")

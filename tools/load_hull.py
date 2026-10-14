@@ -82,10 +82,16 @@ if src is None:
     raise RuntimeError(f"could not open {HULL}")
 
 parts = []
+visual_parts = []
 for prim in src.Traverse():
     m = UsdGeom.Mesh(prim)
     if not m:
         continue
+    # Anything called Super or Visual is scenery, not structure. Merging it
+    # into the hull would wreck the enclosed volume and the centroid every
+    # later number is measured from - and it sits above the waterline, so it
+    # displaces nothing and belongs in no force model.
+    visual = prim.GetName().lower().startswith(("super", "visual"))
     pts = m.GetPointsAttr().Get()
     counts = m.GetFaceVertexCountsAttr().Get()
     idx = m.GetFaceVertexIndicesAttr().Get()
@@ -102,8 +108,12 @@ for prim in src.Traverse():
         for k in range(1, n - 1):          # fan triangulation
             tris.append((idx[off], idx[off + k], idx[off + k + 1]))
         off += n
-    parts.append((v, np.array(tris, dtype=int)))
-    print(f"  read {prim.GetPath()}  {len(v)} pts, {len(tris)} tris")
+    if visual:
+        visual_parts.append((v, np.array(tris, dtype=int)))
+        print(f"  read {prim.GetPath()}  {len(v)} pts, {len(tris)} tris  (visual)")
+    else:
+        parts.append((v, np.array(tris, dtype=int)))
+        print(f"  read {prim.GetPath()}  {len(v)} pts, {len(tris)} tris")
 
 if not parts:
     raise RuntimeError(f"no UsdGeom.Mesh found anywhere in {HULL}")
@@ -318,6 +328,27 @@ import mmws.wave_sim.extension as E
 
 ext = E.get()
 centre = ext.field.tile_size / 2.0 if (ext and ext.field) else 64.0
+# The superstructure rides as a CHILD of the vessel, so it inherits every
+# transform PhysX writes without being part of the body in any other way: no
+# collider, no mass, never seen by the force model.
+if visual_parts:
+    sv = np.concatenate([p[0] for p in visual_parts], axis=0) - centroid
+    sf, off = [], 0
+    for pv, pf in visual_parts:
+        sf.append(pf + off)
+        off += len(pv)
+    sf = np.concatenate(sf, axis=0)
+    sup = UsdGeom.Mesh.Define(stage, f"{VESSEL}/Super")
+    sup.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(sv.astype(np.float32)))
+    sup.CreateFaceVertexCountsAttr(Vt.IntArray.FromNumpy(np.full(len(sf), 3, np.int32)))
+    sup.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(sf.ravel().astype(np.int32)))
+    sup.CreateSubdivisionSchemeAttr().Set("none")
+    sup.CreateExtentAttr(Vt.Vec3fArray([
+        Gf.Vec3f(*(float(v) for v in sv.min(axis=0))),
+        Gf.Vec3f(*(float(v) for v in sv.max(axis=0))),
+    ]))
+    print(f"  {VESSEL}/Super  {len(sf)} tris, visual only (no collider, no mass)")
+
 xf = UsdGeom.Xformable(prim)
 xf.ClearXformOpOrder()
 xf.AddTranslateOp().Set(Gf.Vec3d(float(centre), float(centre), float(z_eq)))

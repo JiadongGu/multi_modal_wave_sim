@@ -218,3 +218,142 @@ def planing_hull(length: float = 5.28, beam: float = 2.21, depth: float = 0.60,
                              else (centre, base + k2, base + k))
 
     return vertices, np.array(triangles, dtype=int)
+
+
+def displacement_hull(length: float = 31.5, beam: float = 7.7, depth: float = 4.6,
+                      bilge: float = 0.38, transom: float = 0.72,
+                      flare: float = 1.04, forefoot: float = 0.55,
+                      sheer_rise: float = 0.14, stations: int = 45,
+                      sections: int = 13, bow_fraction: float = 0.99):
+    """A round-bilge displacement hull. Returns (vertices, triangles).
+
+    Defaults are the Portuguese Andromeda class coastal hydrographic vessel -
+    31.5 x 7.7 m, 3.1 m draft, 245 t - which is about the smallest thing
+    anyone calls a survey ship.
+
+    What makes this shape different from planing_hull
+    -------------------------------------------------
+    A planing hull is a hard-chined V that climbs onto its own bow wave. A
+    displacement hull never does: it pushes water aside and closes it back in
+    behind, so it has no chine at all. The section is a rounded turn of bilge
+    running into near-vertical topsides, which is what `bilge` controls - the
+    fraction of the depth over which the bottom curves out to full beam. Small
+    is a sharp garboard turn, large is a slack bilge.
+
+    The stern is a transom at `transom` of the maximum beam rather than a
+    point, because a survey ship needs deck space aft for the over-the-side
+    gear, and the keel lifts over the last tenth of the length into the run.
+    The forefoot rises forward of 0.7 L, which is the rocker that lets the bow
+    lift to a sea instead of driving through it.
+
+    Freeboard is deliberately generous: `depth` is keel to main deck, not
+    draft. For the Andromeda numbers that is 4.6 m of hull under about 3.1 m
+    of draft, and the 1.5 m left over is what keeps the working deck dry.
+    """
+    if not 0.0 < bow_fraction <= 1.0:
+        raise ValueError(f"bow_fraction must be in (0, 1], got {bow_fraction}")
+    if not 0.0 < bilge < 1.0:
+        raise ValueError(f"bilge must be in (0, 1), got {bilge}")
+
+    half_b = beam / 2.0 / flare
+    t = np.linspace(0.0, bow_fraction, stations)        # 0 transom, 1 stem
+
+    # Plan: a transom aft, full amidships, fine forward.
+    plan = (1.0 - t ** 3.0) ** 0.40
+    plan *= 1.0 - (1.0 - transom) * np.clip((0.30 - t) / 0.30, 0.0, 1.0) ** 2
+    half_width = half_b * plan
+
+    # Keel: flat for most of the length, lifting into the run aft and over the
+    # forefoot forward.
+    keel_z = (-depth
+              + forefoot * depth * np.clip((t - 0.70) / 0.30, 0.0, 1.0) ** 2.0
+              + 0.10 * depth * np.clip((0.12 - t) / 0.12, 0.0, 1.0) ** 2.0)
+    deck_z = sheer_rise * depth * t ** 2.0
+
+    rings = []
+    for i in range(stations):
+        x = float(t[i]) * length
+        w, kz, dz = float(half_width[i]), float(keel_z[i]), float(deck_z[i])
+        span = max(dz - kz, 1e-6)
+        starboard = []
+        for u in np.linspace(0.0, 1.0, sections):       # 0 keel, 1 deck edge
+            if u <= bilge:
+                # Quarter ellipse: zero width on the centreline at the keel,
+                # full beam by the top of the bilge, with the tangent vertical
+                # where it meets the topsides so there is no crease.
+                frac = float(np.sqrt(max(1.0 - ((bilge - u) / bilge) ** 2, 0.0)))
+            else:
+                # Topsides, very slightly flared outward toward the deck.
+                frac = 1.0 + (flare - 1.0) * (u - bilge) / (1.0 - bilge)
+            starboard.append((x, w * frac, kz + span * u))
+        port = [(px, -py, pz) for px, py, pz in reversed(starboard[:-1])]
+        rings.append(np.array(starboard + port, dtype=float))
+
+    ring_size = len(rings[0])
+    vertices = np.concatenate(rings, axis=0)
+    triangles = []
+    for i in range(stations - 1):
+        base, nxt = i * ring_size, (i + 1) * ring_size
+        for k in range(ring_size):
+            k2 = (k + 1) % ring_size          # the wrap is the deck
+            triangles.append((base + k, base + k2, nxt + k2))
+            triangles.append((base + k, nxt + k2, nxt + k))
+
+    for i, flip in ((0, 0), (stations - 1, 1)):
+        base = i * ring_size
+        centre = len(vertices)
+        vertices = np.vstack([vertices, rings[i].mean(axis=0)])
+        for k in range(ring_size):
+            k2 = (k + 1) % ring_size
+            triangles.append((centre, base + k, base + k2) if flip
+                             else (centre, base + k2, base + k))
+
+    return vertices, np.array(triangles, dtype=int)
+
+
+def superstructure(length: float = 31.5, beam: float = 7.7, depth: float = 4.6,
+                   sheer_rise: float = 0.14):
+    """Deckhouse, bridge, mast and a stern A-frame. Returns (vertices, triangles).
+
+    VISUAL ONLY. This is never handed to a force model: it sits above the
+    waterline, so it displaces nothing, and merging it into the hull would
+    corrupt the enclosed volume and the centroid that everything else is
+    measured from. Keep it on a separate prim with no physics APIs.
+
+    Not watertight either, and it does not need to be - the pieces are closed
+    boxes but they interpenetrate, which is exactly what repair() would
+    complain about and what a renderer does not care about at all.
+    """
+    deck = sheer_rise * depth * 0.25            # roughly the deck amidships
+    parts = []
+
+    def box(cx, cy, cz, lx, ly, lz):
+        v, f = box_hull(lx, ly, lz)
+        parts.append((v + np.array([cx, cy, cz]), f))
+
+    # Main deckhouse, set forward of midships the way a survey ship is - the
+    # whole point of the aft two-thirds is clear working deck.
+    box(0.58 * length, 0.0, deck + 1.35, 0.30 * length, 0.76 * beam, 2.7)
+    # Bridge, one deck up and narrower, with the wings a survey ship needs.
+    box(0.63 * length, 0.0, deck + 3.80, 0.17 * length, 0.62 * beam, 2.2)
+    box(0.63 * length, 0.0, deck + 3.80, 0.09 * length, 0.92 * beam, 1.1)
+    # Mast above the bridge, and a radar bar across it.
+    box(0.60 * length, 0.0, deck + 7.20, 0.5, 0.5, 4.6)
+    box(0.60 * length, 0.0, deck + 9.10, 0.4, 2.6, 0.3)
+    # Funnel, aft of the bridge.
+    box(0.47 * length, 0.0, deck + 4.10, 0.10 * length, 0.22 * beam, 2.8)
+    # Stern A-frame: two legs and a cross beam, which is the single most
+    # recognisable thing on a survey ship - it is how the gear goes over.
+    for side in (-1.0, 1.0):
+        box(0.045 * length, side * 0.36 * beam, deck + 2.0, 0.5, 0.5, 4.2)
+    box(0.045 * length, 0.0, deck + 4.05, 0.5, 0.76 * beam, 0.5)
+    # Bulwark around the working deck, so the aft end is not a bare slab.
+    for side in (-1.0, 1.0):
+        box(0.28 * length, side * 0.47 * beam, deck + 0.55, 0.52 * length, 0.25, 1.1)
+
+    vertices = np.concatenate([p[0] for p in parts], axis=0)
+    triangles, offset = [], 0
+    for v, f in parts:
+        triangles.append(f + offset)
+        offset += len(v)
+    return vertices, np.concatenate(triangles, axis=0)

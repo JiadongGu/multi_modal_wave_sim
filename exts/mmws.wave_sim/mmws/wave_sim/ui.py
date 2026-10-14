@@ -131,6 +131,22 @@ class SpectrumPanel:
                 foam.model.add_end_edit_fn(lambda m: self._set_surface())
 
             with ui.HStack(height=24, spacing=6):
+                ui.Label("opacity", width=70,
+                         tooltip="how much of the sea you can see through. "
+                                 "1 is opaque. Below about 0.8 the hull shows "
+                                 "through the surface, which is the only way "
+                                 "to see how deep it is actually sitting")
+                opac = ui.FloatSlider(min=0.05, max=1.0)
+                opac.model.set_value(1.0)
+                self._opacity = opac
+                self._opacity_label = ui.Label("1.00", width=74,
+                                               style={"color": 0xFFAAAAAA})
+                opac.model.add_value_changed_fn(
+                    lambda m: setattr(self._opacity_label, "text",
+                                      f"{m.get_value_as_float():.2f}"))
+                opac.model.add_end_edit_fn(lambda m: self._set_opacity())
+
+            with ui.HStack(height=24, spacing=6):
                 ui.Label("grid", width=70,
                          tooltip="draw the FFT grid lines on the surface - "
                                  "shows the resolution you are working at, "
@@ -166,6 +182,33 @@ class SpectrumPanel:
                                             "color": 0xFF99CC99})
 
     # ------------------------------------------------------------------- state
+
+    def _set_opacity(self) -> None:
+        """Write opacity onto the water material make_scene.py built.
+
+        Reaches into the material rather than the mesh because opacity is a
+        shading property, and the mesh is rewritten from scratch every frame -
+        anything set on it would be gone by the next redraw.
+        """
+        value = float(self._opacity.model.get_value_as_float())
+        try:
+            import omni.usd
+            from pxr import Sdf, UsdShade
+
+            stage = omni.usd.get_context().get_stage()
+            shader = UsdShade.Shader.Get(stage, "/World/Looks/Water/Shader")
+            if not shader:
+                self._readout.text = ("no water material - run "
+                                      "tools/make_scene.py first")
+                return
+            shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(value)
+            # Without a threshold of 0 the renderer treats the surface as a
+            # cutout and you get stippled holes rather than translucency.
+            shader.CreateInput("opacityThreshold",
+                               Sdf.ValueTypeNames.Float).Set(0.0)
+        except Exception as exc:                      # noqa: BLE001
+            if self._readout:
+                self._readout.text = f"opacity failed: {exc}"
 
     def _set_surface(self) -> None:
         """Push the visual knobs onto the live field, without rebuilding it.

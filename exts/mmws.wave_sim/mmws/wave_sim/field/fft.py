@@ -18,6 +18,7 @@ class FftWaveField(WaveField):
     def __init__(self,spectrum=None, tile_size:float = 256.0,
                  resolution: int = 128, seed: int = 0,
                  choppiness: float = 1.0, foam_threshold: float = 0.55,
+                 foam_decay: float = 2.5,
                  **kwargs) -> None:
         #resolution is grid points per side* NxN height samples
         super().__init__(spectrum=spectrum,tile_size=tile_size,resolution=resolution)
@@ -44,7 +45,16 @@ class FftWaveField(WaveField):
         # The Jacobian of the displacement map is 1 on flat water and falls
         # toward 0 as a crest sharpens; below this it is marked as whitecap.
         self.foam_threshold = float(foam_threshold)
+        # How long a whitecap lingers after the crest has moved on, in
+        # seconds. Instantaneous foam - straight from the Jacobian with no
+        # memory - flickers on and off with the fold and reads as noise. Real
+        # foam is entrained air, and air takes time to surface, so a wave
+        # leaves a patch behind it that fades. Without this, cresting looks
+        # like static rather than like breaking.
+        self.foam_decay = float(foam_decay)
         self._dx = self._dy = self._foam = None
+        self._foam_accum = None
+        self._last_t = None
 
         # IMPORTANT: height() does NOT include the horizontal displacement.
         # Once points move sideways the surface is no longer a function of
@@ -109,8 +119,11 @@ class FftWaveField(WaveField):
         self._imag_residual = float(np.max(np.abs(eta.imag)))
         self._z = eta.real
 
+        dt = 0.0 if self._last_t is None else max(self.time - self._last_t, 0.0)
+        self._last_t = self.time
+
         if self.choppiness <= 0.0:
-            self._dx = self._dy = self._foam = None
+            self._dx = self._dy = self._foam = self._foam_accum = None
             return
 
         N2 = self.resolution ** 2
@@ -128,9 +141,21 @@ class FftWaveField(WaveField):
         jacobian = (1.0 + lam * jxx) * (1.0 + lam * jyy) - (lam * jxy) ** 2
         # 1 is undisturbed, 0 is a fold. Map the span below the threshold onto
         # 0..1 so there is a gradient to shade with rather than a hard mask.
-        self._foam = np.clip(
+        born = np.clip(
             (self.foam_threshold - jacobian) / max(self.foam_threshold, 1e-6),
             0.0, 1.0)
+
+        # Take the brighter of "breaking now" and "was breaking recently".
+        # Maximum rather than a sum, so foam saturates at 1 instead of
+        # accumulating into a solid white sea wherever waves keep passing.
+        if self._foam_accum is None or self._foam_accum.shape != born.shape:
+            self._foam_accum = born
+        elif self.foam_decay > 0.0 and dt > 0.0:
+            self._foam_accum = np.maximum(
+                self._foam_accum * math.exp(-dt / self.foam_decay), born)
+        else:
+            self._foam_accum = born
+        self._foam = self._foam_accum
 
     def mesh_points(self):
         """Grid points, displaced horizontally if choppiness is on."""
