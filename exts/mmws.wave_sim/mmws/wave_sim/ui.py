@@ -195,6 +195,17 @@ class SpectrumPanel:
                 ui.Label("record run to .npz", style={"color": 0xFFAAAAAA})
 
             with ui.HStack(height=24, spacing=6):
+                ui.Label("drive", width=70,
+                         tooltip="W/S ahead and astern, A/D turn. Two screws "
+                                 "at a known point below the centre of "
+                                 "gravity, so opening the throttle lifts the "
+                                 "bow the way it should")
+                self._drive = ui.CheckBox(width=20)
+                self._drive.model.add_value_changed_fn(
+                    lambda m: self._ext.keyboard_drive(bool(m.get_value_as_bool())))
+                ui.Label("WASD thrust", style={"color": 0xFFAAAAAA})
+
+            with ui.HStack(height=24, spacing=6):
                 ui.Label("camera", width=70,
                          tooltip="chase the hull with a level camera. Follows "
                                  "position only - a camera that rolled with "
@@ -300,6 +311,7 @@ class SpectrumPanel:
         self._grid.model.set_value(bool(getattr(self._ext, "show_grid", False)))
         self._follow.model.set_value(bool(getattr(self._ext, "follow", False)))
         self._arrows.model.set_value(bool(getattr(self._ext, "show_forces", False)))
+        self._drive.model.set_value(getattr(self._ext, "_kb_sub", None) is not None)
         self._capture.model.set_value(getattr(self._ext, "_cap", None) is not None)
         self._report()
 

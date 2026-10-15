@@ -134,6 +134,11 @@ class MultiModalWaveSimExtension(_ExtBase):
         # redecorating someone else's work.
         self.active = False
         self._stage_id = None
+        # WASD drive, off until keyboard_drive() turns it on.
+        self.thruster = None
+        self._keys = set()
+        self._kb_sub = None
+        self._kb_input = None
         # Per-face force arrows, off by default.
         self.show_forces = False
         self._forces_drawn = False
@@ -184,6 +189,11 @@ class MultiModalWaveSimExtension(_ExtBase):
         # half-torn-down extension is how Isaac Sim crashes on reload, and
         # Python extensions reload often during development.
         self._unsubscribe()
+        if getattr(self, "_kb_sub", None) is not None:
+            try:
+                self.keyboard_drive(False)
+            except Exception:                         # noqa: BLE001
+                pass
         if getattr(self, "_panel", None) is not None:
             self._panel.destroy()
             self._panel = None
@@ -264,6 +274,55 @@ class MultiModalWaveSimExtension(_ExtBase):
                 pass
             finally:
                 self._in_select = False
+
+    # ------------------------------------------------------------------- drive
+
+    def keyboard_drive(self, enable: bool = True) -> None:
+        """W/S ahead and astern, A/D turn to port and starboard.
+
+        Kit delivers key events globally, so this stays unsubscribed unless
+        asked for - otherwise typing "was" in the Script Editor would drive
+        the boat.
+        """
+        import carb.input
+        import omni.appwindow
+
+        if self._kb_sub is not None:
+            self._kb_input.unsubscribe_to_keyboard_events(
+                omni.appwindow.get_default_app_window().get_keyboard(),
+                self._kb_sub)
+            self._kb_sub = self._kb_input = None
+            self._keys.clear()
+            self._drive_from_keys()
+        if not enable:
+            self._log("drive off", BANNER_LEVEL)
+            return
+
+        self._kb_input = carb.input.acquire_input_interface()
+        self._kb_sub = self._kb_input.subscribe_to_keyboard_events(
+            omni.appwindow.get_default_app_window().get_keyboard(), self._on_key)
+        self._log("drive on - W/S ahead and astern, A/D turn", BANNER_LEVEL)
+
+    def _on_key(self, event, *args) -> bool:
+        import carb.input
+
+        name = getattr(event.input, "name", str(event.input)).upper()
+        if name in ("W", "A", "S", "D"):
+            if event.type == carb.input.KeyboardEventType.KEY_PRESS:
+                self._keys.add(name)
+            elif event.type == carb.input.KeyboardEventType.KEY_RELEASE:
+                self._keys.discard(name)
+            self._drive_from_keys()
+        # Never swallow the event: the viewport's own camera keys share WASD,
+        # and stealing them would make the scene impossible to fly around.
+        return True
+
+    def _drive_from_keys(self) -> None:
+        if self.thruster is None:
+            return
+        surge = ("W" in self._keys) - ("S" in self._keys)
+        turn = ("A" in self._keys) - ("D" in self._keys)
+        self.thruster.set_drive(surge, turn)
 
     # ----------------------------------------------------------------- scoping
 
@@ -713,8 +772,32 @@ class MultiModalWaveSimExtension(_ExtBase):
                         triangles=bridge.triangles,
                     ),
                     FORCES.create("damping", extents=extents),
+                    FORCES.create(
+                        "thruster",
+                        # 2% of the vessel's own weight per screw. Not a
+                        # propeller curve - a number, chosen so that when the
+                        # hull moves you know exactly what moved it.
+                        thrust=0.02 * bridge.mass * 9.80665,
+                        length=float(extents[0]), beam=float(extents[1]),
+                        draft=float(extents[2]) * 0.5,
+                    ),
                 ],
             )
+            self.thruster = next(
+                (m for m in self.force_model.models
+                 if hasattr(m, "set_drive")), None)
+            if self.thruster is not None:
+                # numpy is imported per-function in this module, not at the
+                # top: the package must stay importable from a plain shell for
+                # tools/selftest.py, and a module-level import here was never
+                # needed.
+                import numpy as _np
+
+                port, starboard = self.thruster.positions[:2]
+                self._log(
+                    f"  drive  {self.thruster.thrust/1000.0:.1f} kN per screw "
+                    f"at {_np.round(port, 2)} and {_np.round(starboard, 2)} m "
+                    "(body frame)", BANNER_LEVEL)
             lo = bridge.vertices.min(axis=0)
             hi = bridge.vertices.max(axis=0)
             self._log(
