@@ -11,3 +11,5 @@ venv/
 *.usda.bak
 # Isaac Sim writes caches next to extensions it loads
 .thumbs/
+# Generated hulls, skies and run captures. All regenerable.
+out/

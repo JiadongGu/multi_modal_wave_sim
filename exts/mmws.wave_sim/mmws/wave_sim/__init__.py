@@ -13,6 +13,7 @@ Importing this package registers every built-in implementation, so
 
 from .globals import GRAVITY, WATER_DENSITY_FRESH, WATER_DENSITY_SALT
 from .registry import SPECTRA, FIELDS, FORCES
+from .paths import output, output_dir
 
 # Importing these for their side effect: each module decorates its class with
 # the matching registry, which is what makes the swap-by-name work.

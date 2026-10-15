@@ -33,7 +33,8 @@ from math import degrees, pi, radians
 # Ranges are chosen to span the useful physics, not to be round numbers:
 # gamma below 1 is unphysical and the class rejects it, and gamma = 1 is
 # exactly Pierson-Moskowitz, so the slider's left end is a different spectrum.
-CAPTURE_PATH = "/tmp/mmws_run.npz"
+# None means "ask the extension", which resolves to <repo>/out.
+CAPTURE_PATH = None
 
 PARAMS = (
     ("Hs", "hs", 0.0, 8.0, "m",
@@ -185,13 +186,14 @@ class SpectrumPanel:
             with ui.HStack(height=24, spacing=6):
                 ui.Label("record", width=70,
                          tooltip="write every tick of this run to "
-                                 "/tmp/mmws_run.npz - pose, velocity, wrench, "
+                                 "out/run.npz - pose, velocity, wrench, "
                                  "the wave surface, and every face force. "
                                  "Overwritten each run, written on Stop")
                 self._capture = ui.CheckBox(width=20)
                 self._capture.model.add_value_changed_fn(
-                    lambda m: self._ext.capture(CAPTURE_PATH
-                                                if m.get_value_as_bool() else None))
+                    lambda m: (self._ext.capture(CAPTURE_PATH)
+                               if m.get_value_as_bool()
+                               else self._ext.capture(None)))
                 ui.Label("record run to .npz", style={"color": 0xFFAAAAAA})
 
             with ui.HStack(height=24, spacing=6):

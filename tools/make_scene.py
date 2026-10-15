@@ -53,7 +53,7 @@ if TOOLS is None:
     raise RuntimeError(
         f"cannot find the tools directory above {_pkg.__file__}")
 
-SKY_PNG = globals().get("SKY_PNG", "/tmp/mmws_sky.png")
+SKY_PNG = globals().get("SKY_PNG", output("sky.png"))
 SUN_ELEV = float(globals().get("SUN_ELEV", 58.0))
 SUN_AZ = float(globals().get("SUN_AZ", 135.0))
 WIDTH = int(globals().get("SKY_WIDTH", 2048))

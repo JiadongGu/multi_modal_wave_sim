@@ -7,7 +7,7 @@ Run in Isaac Sim's Script Editor:
 
 then feed the file it writes to load_hull.py with the published displacement:
 
-    HULL, MASS = "/tmp/wigley_hull.usda", 1406.0
+    HULL, MASS = "<repo>/out/wigley_hull.usda", 1406.0
     exec(open("/home/asv/dev/multi_modal_wave_sim/tools/load_hull.py").read())
 
 Why a generated hull and not a downloaded one
@@ -51,6 +51,7 @@ from pathlib import Path
 from mmws.wave_sim.forces.hulls import (displacement_hull, planing_hull,
                                         superstructure, wigley_hull)
 from mmws.wave_sim.integration.repair import repair
+from mmws.wave_sim.paths import output
 
 # "wigley"  - the analytic benchmark hull. Sailing-yacht-ish, and the one with
 #             published towing tank data (Journee 1992).
@@ -68,7 +69,7 @@ _L = {"planing": 5.28, "survey": 31.5}.get(HULL_TYPE, 6.10)
 _B = {"planing": 2.21, "survey": 7.7}.get(HULL_TYPE, 2.72)
 _D = {"survey": 4.6}.get(HULL_TYPE, 0.60)
 
-OUT = globals().get("OUT", f"/tmp/{HULL_TYPE}_hull.usda")
+OUT = globals().get("OUT", output(f"{HULL_TYPE}_hull.usda"))
 LENGTH = float(globals().get("LENGTH", _L))
 BEAM = float(globals().get("BEAM", _B))
 DEPTH = float(globals().get("DEPTH", _D))

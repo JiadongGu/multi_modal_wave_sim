@@ -77,6 +77,11 @@ def _lead(state, dt):
     )
 
 
+# A distinct "argument not given" marker, because None is a real value here:
+# capture(None) stops and writes.
+_DEFAULT_PATH = object()
+
+
 # The live extension object, for the Script Editor and for tools/.
 #
 # Kit constructs the extension itself and hands the instance to nobody, so
@@ -454,14 +459,14 @@ class MultiModalWaveSimExtension(_ExtBase):
 
     # ---------------------------------------------------------- run recording
 
-    def capture(self, path="/tmp/mmws_run.npz", surface_every: int = 10,
+    def capture(self, path=_DEFAULT_PATH, surface_every: int = 10,
                 faces_every: int = 1, limit_mb: float = 512.0):
         """Record the whole run to one .npz, overwritten each time.
 
         Pass None to stop and write. Stopping the timeline also writes it, so
         a run that is simply stopped is not a run that is lost.
 
-            E.get().capture()            # start
+            E.get().capture()            # start, into out/run.npz
             E.get().capture(None)        # stop and write
 
         Streams, and what they cost
@@ -485,6 +490,13 @@ class MultiModalWaveSimExtension(_ExtBase):
         """
         import numpy as _np
 
+        from .paths import output
+
+        # A sentinel, not None: None has always meant "stop and write", the
+        # panel calls it that way, and overloading it to also mean "use the
+        # default path" would have made stopping start a new capture.
+        if path is _DEFAULT_PATH:
+            path = output("run.npz")
         if self._cap is not None:
             self._write_capture()
         if path is None:
@@ -681,7 +693,7 @@ class MultiModalWaveSimExtension(_ExtBase):
     def record(self, path=None):
         """Write one row per physics step to CSV, for frequency-domain work.
 
-            E.get().record("/tmp/heave.csv")    # start
+            E.get().record(output("heave.csv"))    # start
             E.get().record(None)                # stop and close
 
         The heartbeat is once a second. Nyquist on a 1 Hz sample is 0.5 Hz, so
