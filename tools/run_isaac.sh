@@ -72,6 +72,31 @@ sanitize_env() {
     fi
 }
 
+# Put Kit's OWN CUDA libraries ahead of everything else.
+#
+# Scrubbing the environment is necessary but not sufficient. ldconfig may have
+# a system CUDA registered - on the lab machine /usr/local/cuda is 12.1 - and
+# the loader finds that before Kit's bundled 12.8. Isaac Sim's torch then dies
+# on a symbol the older runtime does not export:
+#
+#     libc10_cuda.so: undefined symbol: cudaGetDriverEntryPointByVersion
+#
+# and Kit's deprecation manager treats that as fatal, so the app exits 0 after
+# about six seconds with no crash and no useful message. Prepending the
+# bundled nvidia/*/lib directories makes Kit's own copies win.
+#
+# This is why the fix cannot simply be "unset LD_LIBRARY_PATH": the system
+# path is not in LD_LIBRARY_PATH at all, it is in the ldconfig cache.
+prefer_bundled_cuda() {
+    local root="$1" dirs
+    dirs="$(find "$root/exts/isaacsim.pip.nv/pip_prebundle/nvidia" \
+                 -maxdepth 2 -name lib -type d 2>/dev/null | tr '\n' ':')"
+    if [[ -n "$dirs" ]]; then
+        export LD_LIBRARY_PATH="${dirs%:}"
+        echo "cuda      : using Kit's bundled libraries"
+    fi
+}
+
 # Newest first, so an upgrade is picked up without touching this file.
 candidates() {
     shopt -s nullglob
@@ -103,6 +128,7 @@ sanitize_env
 if ISAAC_DIR="$(find_isaac)"; then
     version="$(cat "$ISAAC_DIR/VERSION" 2>/dev/null || echo unknown)"
     echo "Isaac Sim : $ISAAC_DIR  ($version)"
+    prefer_bundled_cuda "$ISAAC_DIR"
     echo "extension : $REPO/exts/mmws.wave_sim"
     exec "$ISAAC_DIR/isaac-sim.sh" \
         --ext-folder "$REPO/exts" \
