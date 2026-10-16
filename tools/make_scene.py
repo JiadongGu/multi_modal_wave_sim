@@ -42,6 +42,11 @@ from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade
 import mmws.wave_sim as _pkg
 from pathlib import Path as _P
 
+# Generated files go to <repo>/out (or $MMWS_OUT), never to a bare /tmp
+# path - other people use this machine, and two users writing sky.png to
+# the same place is a race nobody would think to look for.
+from mmws.wave_sim.paths import output
+
 # Walk up until the tools directory turns up, rather than counting parents:
 # I counted three and it was four. A search is right whatever the layout.
 TOOLS = None
