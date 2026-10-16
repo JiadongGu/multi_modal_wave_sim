@@ -10,6 +10,7 @@
 #   ./tools/run_isaac.sh                      # find Isaac Sim, whatever version
 #   ISAAC=/path/to/isaacsim ./tools/run_isaac.sh
 #   ./tools/run_isaac.sh /path/to/stage.usd   # extra args pass through
+#   ./tools/run_isaac.sh --stream             # headless, WebRTC livestream
 #   MMWS_KEEP_ENV=1 ./tools/run_isaac.sh      # do not scrub the environment
 #
 # The search is deliberately version-agnostic. Pinning a version in a launcher
@@ -19,6 +20,25 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# --stream launches the headless WebRTC app instead of the desktop one. The
+# viewport is then encoded on the GPU and sent as video, and input comes back
+# over Isaac's own channel - which is the difference that matters when the
+# machine is remote. Screen-scraping a 60 FPS 3D viewport over VNC and
+# synthesising X events into Kit's carb.input stack does not work well, and
+# on a high-latency link it does not work at all.
+#
+# Ports: 49100/tcp signalling, 47998/udp media. They carry NO authentication
+# and NO encryption, so keep them on a private network - a tailnet or a LAN,
+# never a public address.
+STREAM=0
+ARGS=()
+for _arg in "$@"; do
+    case "$_arg" in
+        --stream) STREAM=1 ;;
+        *) ARGS+=("$_arg") ;;
+    esac
+done
 
 # --- scrub the environment Kit inherits -------------------------------------
 # Kit bundles its own CUDA and its own Python. A conda environment on
@@ -130,10 +150,16 @@ if ISAAC_DIR="$(find_isaac)"; then
     echo "Isaac Sim : $ISAAC_DIR  ($version)"
     prefer_bundled_cuda "$ISAAC_DIR"
     echo "extension : $REPO/exts/mmws.wave_sim"
-    exec "$ISAAC_DIR/isaac-sim.sh" \
+    if (( STREAM )); then
+        echo "mode      : WebRTC livestream (signalling 49100/tcp, media 47998/udp)"
+        app="$ISAAC_DIR/isaac-sim.streaming.sh"
+    else
+        app="$ISAAC_DIR/isaac-sim.sh"
+    fi
+    exec "$app" \
         --ext-folder "$REPO/exts" \
         --enable mmws.wave_sim \
-        "$@"
+        ${ARGS[@]+"${ARGS[@]}"}
 fi
 
 # No directory install. Isaac Sim 4.0+ also ships on pip, which puts an
@@ -141,7 +167,7 @@ fi
 if command -v isaacsim >/dev/null 2>&1; then
     echo "Isaac Sim : $(command -v isaacsim)  (pip install)"
     echo "extension : $REPO/exts/mmws.wave_sim"
-    exec isaacsim --ext-folder "$REPO/exts" --enable mmws.wave_sim "$@"
+    exec isaacsim --ext-folder "$REPO/exts" --enable mmws.wave_sim ${ARGS[@]+"${ARGS[@]}"}
 fi
 
 echo "Isaac Sim not found." >&2
