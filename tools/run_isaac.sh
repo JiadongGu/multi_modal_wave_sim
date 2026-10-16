@@ -10,6 +10,7 @@
 #   ./tools/run_isaac.sh                      # find Isaac Sim, whatever version
 #   ISAAC=/path/to/isaacsim ./tools/run_isaac.sh
 #   ./tools/run_isaac.sh /path/to/stage.usd   # extra args pass through
+#   MMWS_KEEP_ENV=1 ./tools/run_isaac.sh      # do not scrub the environment
 #
 # The search is deliberately version-agnostic. Pinning a version in a launcher
 # script means the script breaks on upgrade, which is exactly what happened
@@ -18,6 +19,58 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# --- scrub the environment Kit inherits -------------------------------------
+# Kit bundles its own CUDA and its own Python. A conda environment on
+# LD_LIBRARY_PATH puts a second, older set of those libraries ahead of them,
+# and the two do not mix: the bundled libcusparse.so.12 needs the symbol
+# __nvJitLinkCreate_12_8 from CUDA 12.8's libnvJitLink.so.12, resolves against
+# conda's older copy instead, and `import torch` dies. Every Isaac extension
+# that touches torch then fails in turn, and the process is finally killed by
+#
+#     Inconsistency detected by ld.so: dl-tls.c: _dl_allocate_tls_init:
+#     Assertion `listp != NULL' failed!
+#
+# which is what mixing two C++/CUDA runtimes in one process looks like.
+#
+# This is not hypothetical on this machine: there was a pip-installed Isaac Sim
+# under miniconda3/lib/python3.12/site-packages/isaacsim, so an active (base)
+# environment shipped a competing Isaac Sim as well as competing CUDA.
+#
+# Scrubbing here rather than in anyone's shell profile is deliberate - the
+# machine is shared, and a launcher that fixes itself beats a dotfile that
+# fixes one user and surprises the next.
+sanitize_env() {
+    if [[ -n "${MMWS_KEEP_ENV:-}" ]]; then
+        echo "environment : left as-is (MMWS_KEEP_ENV set)"
+        return
+    fi
+    local dropped=()
+    for var in LD_LIBRARY_PATH PYTHONPATH PYTHONHOME LD_PRELOAD; do
+        [[ -n "${!var:-}" ]] && dropped+=("$var")
+        unset "$var"
+    done
+
+    # Remove conda-family entries from PATH, keeping everything else in order.
+    local parts part cleaned=() removed=0
+    IFS=':' read -ra parts <<< "$PATH"
+    for part in "${parts[@]}"; do
+        case "$part" in
+            */miniconda3/*|*/anaconda3/*|*/miniforge3/*|*/mambaforge/*|*/conda/*)
+                removed=$((removed + 1)) ;;
+            *) cleaned+=("$part") ;;
+        esac
+    done
+    if (( removed )); then
+        PATH="$(IFS=':'; printf '%s' "${cleaned[*]}")"
+        export PATH
+        dropped+=("PATH(-${removed} conda)")
+    fi
+
+    if (( ${#dropped[@]} )); then
+        echo "environment : scrubbed ${dropped[*]}"
+    fi
+}
 
 # Newest first, so an upgrade is picked up without touching this file.
 candidates() {
@@ -45,8 +98,11 @@ find_isaac() {
     return 1
 }
 
+sanitize_env
+
 if ISAAC_DIR="$(find_isaac)"; then
-    echo "Isaac Sim : $ISAAC_DIR"
+    version="$(cat "$ISAAC_DIR/VERSION" 2>/dev/null || echo unknown)"
+    echo "Isaac Sim : $ISAAC_DIR  ($version)"
     echo "extension : $REPO/exts/mmws.wave_sim"
     exec "$ISAAC_DIR/isaac-sim.sh" \
         --ext-folder "$REPO/exts" \
