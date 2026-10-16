@@ -52,8 +52,8 @@ TRACE_STEPS = 400
 FORCE_LEAD_STEPS = 1.5
 
 
-def _lead(state, dt):
-    """state, with position extrapolated FORCE_LEAD_STEPS into the future.
+def _lead(state, dt, steps=None):
+    """state, with position extrapolated `steps` physics steps into the future.
 
     linear_velocity is body-frame (see convert.body_state_from_usd), and the
     position is world-frame, so the velocity has to be rotated back out before
@@ -66,14 +66,15 @@ def _lead(state, dt):
 
     from .forces import quat_to_matrix
 
-    if dt <= 0.0 or FORCE_LEAD_STEPS == 0.0:
+    steps = FORCE_LEAD_STEPS if steps is None else float(steps)
+    if dt <= 0.0 or steps == 0.0:
         return state
     R = quat_to_matrix(_np.asarray(state.orientation, dtype=float))
     v_world = R @ _np.asarray(state.linear_velocity, dtype=float)
     return replace(
         state,
         position=_np.asarray(state.position, dtype=float)
-        + v_world * (FORCE_LEAD_STEPS * dt),
+        + v_world * (steps * dt),
     )
 
 
@@ -146,6 +147,20 @@ class MultiModalWaveSimExtension(_ExtBase):
         # the boat and flew the camera at the same time. IJKL is the same
         # shape one row right, and Kit leaves it alone.
         self._drive_keys = ("I", "J", "K", "L")   # ahead, port, astern, starboard
+
+        # How far ahead the body state is extrapolated before the forces are
+        # evaluated, in physics steps. Settable at runtime so it can be swept
+        # against a recording without restarting Kit:
+        #
+        #     E.get().force_lead = 1.0
+        #
+        # It exists to cancel the one-step transport delay between reading the
+        # pose and PhysX applying the force. Leading by MORE than the delay
+        # turns it into velocity feedback with the wrong sign - negative
+        # damping - and the hull settles into a limit cycle instead of
+        # settling down: measured on flat water at 1.594 Hz, 23.8 mm peak to
+        # peak, constant to four significant figures over 40 s.
+        self.force_lead = FORCE_LEAD_STEPS
         self.thruster = None
         self._keys = set()
         self._kb_sub = None
@@ -1015,8 +1030,8 @@ class MultiModalWaveSimExtension(_ExtBase):
                 if _feed is not None:
                     _feed(state.position, state.linear_velocity)
                 wrench = self.force_model.wrench(
-                    _lead(state, dt), self.field,
-                    self._sim_time + FORCE_LEAD_STEPS * dt,
+                    _lead(state, dt, self.force_lead), self.field,
+                    self._sim_time + self.force_lead * dt,
                 )
                 self.vessel.apply(wrench)
                 if self._cap is not None:
