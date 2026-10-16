@@ -139,7 +139,13 @@ class MultiModalWaveSimExtension(_ExtBase):
         # redecorating someone else's work.
         self.active = False
         self._stage_id = None
-        # WASD drive, off until keyboard_drive() turns it on.
+        # Drive keys, off until keyboard_drive() turns it on.
+        #
+        # NOT WASD: Kit binds those to the viewport camera fly-through,
+        # and _on_key deliberately does not swallow events, so WASD drove
+        # the boat and flew the camera at the same time. IJKL is the same
+        # shape one row right, and Kit leaves it alone.
+        self._drive_keys = ("I", "J", "K", "L")   # ahead, port, astern, starboard
         self.thruster = None
         self._keys = set()
         self._kb_sub = None
@@ -282,15 +288,28 @@ class MultiModalWaveSimExtension(_ExtBase):
 
     # ------------------------------------------------------------------- drive
 
-    def keyboard_drive(self, enable: bool = True) -> None:
-        """W/S ahead and astern, A/D turn to port and starboard.
+    def keyboard_drive(self, enable: bool = True, keys: str = None) -> None:
+        """I/K ahead and astern, J/L turn to port and starboard.
 
         Kit delivers key events globally, so this stays unsubscribed unless
-        asked for - otherwise typing "was" in the Script Editor would drive
+        asked for - otherwise typing "like" in the Script Editor would drive
         the boat.
+
+        `keys` is four letters in the order ahead, port, astern, starboard.
+        The default is IJKL rather than WASD because Kit uses WASD for the
+        viewport camera and _on_key does not swallow events: with WASD you
+        drove the hull and flew the camera together, which is unusable.
+        Pass "WASD" back if you ever want the old behaviour.
         """
         import carb.input
         import omni.appwindow
+
+        if keys is not None:
+            k = str(keys).upper()
+            if len(k) != 4 or len(set(k)) != 4:
+                raise ValueError(
+                    f"keys must be four distinct letters, got {keys!r}")
+            self._drive_keys = tuple(k)
 
         if self._kb_sub is not None:
             self._kb_input.unsubscribe_to_keyboard_events(
@@ -306,27 +325,32 @@ class MultiModalWaveSimExtension(_ExtBase):
         self._kb_input = carb.input.acquire_input_interface()
         self._kb_sub = self._kb_input.subscribe_to_keyboard_events(
             omni.appwindow.get_default_app_window().get_keyboard(), self._on_key)
-        self._log("drive on - W/S ahead and astern, A/D turn", BANNER_LEVEL)
+        ahead, port, astern, starboard = self._drive_keys
+        self._log(f"drive on - {ahead}/{astern} ahead and astern, "
+                  f"{port}/{starboard} turn", BANNER_LEVEL)
 
     def _on_key(self, event, *args) -> bool:
         import carb.input
 
         name = getattr(event.input, "name", str(event.input)).upper()
-        if name in ("W", "A", "S", "D"):
+        if name in self._drive_keys:
             if event.type == carb.input.KeyboardEventType.KEY_PRESS:
                 self._keys.add(name)
             elif event.type == carb.input.KeyboardEventType.KEY_RELEASE:
                 self._keys.discard(name)
             self._drive_from_keys()
-        # Never swallow the event: the viewport's own camera keys share WASD,
-        # and stealing them would make the scene impossible to fly around.
+        # Never swallow the event: Kit's viewport camera and its shortcuts
+        # share the keyboard, and stealing keys would make the scene
+        # impossible to fly around. This is why the drive keys have to be
+        # ones Kit does not already use, rather than being grabbed.
         return True
 
     def _drive_from_keys(self) -> None:
         if self.thruster is None:
             return
-        surge = ("W" in self._keys) - ("S" in self._keys)
-        turn = ("A" in self._keys) - ("D" in self._keys)
+        ahead, port, astern, starboard = self._drive_keys
+        surge = (ahead in self._keys) - (astern in self._keys)
+        turn = (port in self._keys) - (starboard in self._keys)
         self.thruster.set_drive(surge, turn)
 
     # ----------------------------------------------------------------- scoping
