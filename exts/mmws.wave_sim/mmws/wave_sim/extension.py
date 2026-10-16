@@ -253,8 +253,19 @@ class MultiModalWaveSimExtension(_ExtBase):
 
         if field is not None or rebuild:
             name = field if field is not None else self._field_name
-            kwargs = field_kwargs if field is not None else self._field_kwargs
-            self._field_name, self._field_kwargs = name, dict(kwargs or {})
+            kwargs = dict(
+                (field_kwargs if field is not None else self._field_kwargs) or {})
+            # The tile is the world the hull floats in, and load_hull.py puts
+            # the vessel at tile_size/2. Swapping the field must not silently
+            # resize it: select(field="flat") with no kwargs used to drop the
+            # 256 m fft tile for WaveField's 128 m default, which left the
+            # boat sitting exactly on the corner of the water with the mesh
+            # ending under its bow. Carried over per-key, not wholesale -
+            # choppiness and seed mean nothing to flat water and would raise.
+            if self.field is not None:
+                kwargs.setdefault("tile_size", self.field.tile_size)
+                kwargs.setdefault("resolution", self.field.resolution)
+            self._field_name, self._field_kwargs = name, kwargs
             self.field = FIELDS.create(
                 name, spectrum=self.spectrum, **self._field_kwargs
             )
@@ -510,7 +521,20 @@ class MultiModalWaveSimExtension(_ExtBase):
         every tick and they cannot be stacked into a rectangular array. They
         are stored concatenated with a per-tick count, which you split with
 
-            np.split(face_forces, np.cumsum(face_counts)[:-1])
+            np.split(v0_face_forces, np.cumsum(v0_face_counts)[:-1])
+
+        Layout
+        ------
+        Per-vessel streams are prefixed v0_, v1_, ... and `vessels` lists the
+        prim path each index belongs to. One hull is written today; the
+        prefix exists so a second one is an extra key rather than a new file
+        format, which matters because vessel-to-vessel wake is the direction
+        this is going. `t` and the surface_* arrays are unprefixed: there is
+        one clock and one water surface, shared by everyone in the scene.
+
+            d = np.load(path)
+            list(d["vessels"])      -> ['/World/Vessel']
+            d["v0_pos"], d["t"]     -> hull track against the shared clock
         """
         import numpy as _np
 
@@ -590,8 +614,24 @@ class MultiModalWaveSimExtension(_ExtBase):
         cap, self._cap = self._cap, None
         if cap is None or not cap["t"]:
             return
-        out = {k: _np.asarray(cap[k]) for k in
-               ("t", "pos", "quat", "lin_vel", "ang_vel", "force", "moment")}
+        # Per-vessel streams are namespaced v0_, v1_, ... and `vessels` says
+        # which prim each index is. There is one hull today, so this writes
+        # v0_ only - but wake interaction between vessels is the direction
+        # this is heading, and a file format that assumes a single boat would
+        # have to be thrown away the moment a second one floats. The water is
+        # shared by everything in the scene, so surface_* stays unprefixed.
+        path = getattr(self.vessel, "body_path", None) or "/World/Vessel"
+        mass = float(getattr(self.vessel, "mass", 0.0) or 0.0)
+        out = {
+            "vessels": _np.asarray([str(path)]),
+            "v0_path": _np.asarray(str(path)),
+            "v0_mass": _np.asarray(mass),
+        }
+        for k in ("t", "pos", "quat", "lin_vel", "ang_vel", "force", "moment"):
+            out[f"v0_{k}"] = _np.asarray(cap[k])
+        # The clock is shared by every stream in the file, so it is also
+        # written unprefixed - every analysis starts by reading it.
+        out["t"] = out["v0_t"]
         if cap["surface_t"]:
             out["surface_t"] = _np.asarray(cap["surface_t"])
             out["surface_z"] = _np.stack(cap["surface_z"])
@@ -599,10 +639,10 @@ class MultiModalWaveSimExtension(_ExtBase):
                 if cap[key]:
                     out[key] = _np.stack(cap[key])
         if cap["face_t"]:
-            out["face_t"] = _np.asarray(cap["face_t"])
-            out["face_counts"] = _np.asarray(cap["face_counts"], dtype=_np.int32)
-            out["face_centroids"] = _np.concatenate(cap["face_centroids"])
-            out["face_forces"] = _np.concatenate(cap["face_forces"])
+            out["v0_face_t"] = _np.asarray(cap["face_t"])
+            out["v0_face_counts"] = _np.asarray(cap["face_counts"], dtype=_np.int32)
+            out["v0_face_centroids"] = _np.concatenate(cap["face_centroids"])
+            out["v0_face_forces"] = _np.concatenate(cap["face_forces"])
         try:
             _np.savez_compressed(cap["path"], **out)
             self._log(f"capture written: {cap['path']}  "
