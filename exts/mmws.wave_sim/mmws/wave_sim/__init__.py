@@ -23,6 +23,10 @@ from .spectra import jonswap as _jonswap            # noqa: F401
 from .spectra import eckv as _eckv                  # noqa: F401
 from .field import flat as _flat                    # noqa: F401
 from .field import fft as _fft                      # noqa: F401
+# Imported after flat and fft: WakeField builds its base field through the
+# registry, so whatever it wraps has to be registered by the time anyone
+# constructs one.
+from .field import wake as _wake                    # noqa: F401
 from .forces import zero as _zero                   # noqa: F401
 from .forces import buoyancy_pressure as _bp       # noqa: F401
 from .forces import thruster as _thruster          # noqa: F401

@@ -943,6 +943,13 @@ class MultiModalWaveSimExtension(_ExtBase):
                 # reference costs nothing; the heartbeat does the arithmetic
                 # once a second.
                 self._last_state = state
+                # A wake field needs to know where the hull is and how fast
+                # it is going; no other field does. Duck-typed rather than
+                # added to the WaveField contract, so a field that does not
+                # shed a wake needs no empty method and no edit.
+                _feed = getattr(self.field, "set_source", None)
+                if _feed is not None:
+                    _feed(state.position, state.linear_velocity)
                 wrench = self.force_model.wrench(
                     _lead(state, dt), self.field,
                     self._sim_time + FORCE_LEAD_STEPS * dt,

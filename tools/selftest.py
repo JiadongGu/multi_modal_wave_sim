@@ -798,6 +798,171 @@ def test_damping_stops_the_energy_pump():
 
 # ------------------------------------------------------------------------- main
 
+# --------------------------------------------------------------------- wake
+
+
+def _wake(base="flat", **kw):
+    spec = SPECTRA.create("jonswap", hs=2.0, tp=7.0)
+    return FIELDS.create("wake", spectrum=spec, tile_size=128.0,
+                         resolution=64, base=base, **kw)
+
+
+def _drive(f, speed=3.0, steps=60, dt=0.1, y=10.0):
+    """Run a hull along +x at a constant speed, shedding wake as it goes."""
+    for i in range(steps):
+        t = i * dt
+        f.advance(t)
+        f.set_source([speed * t, y, 0.0], [speed, 0.0, 0.0])
+    return (steps - 1) * dt
+
+
+def test_wake_needs_motion():
+    """A vessel sitting still leaves no wake. The simplest thing that could be wrong."""
+    f = _wake()
+    for i in range(50):
+        f.advance(i * 0.1)
+        f.set_source([10.0, 10.0, 0.0], [0.0, 0.0, 0.0])
+    x = np.linspace(0.0, 60.0, 61)
+    peak = float(np.max(np.abs(f.wake_height(x, 10.0))))
+    assert peak == 0.0, f"still hull shed a wake of {peak} m"
+
+
+def test_wake_appears_behind_a_moving_hull():
+    f = _wake()
+    t_end = _drive(f)
+    f.advance(t_end)
+    x = np.linspace(0.0, 3.0 * t_end, 200)
+    peak = float(np.max(np.abs(f.wake_height(x, 10.0))))
+    assert peak > 1e-4, f"moving hull shed no wake, peak {peak} m"
+
+
+def test_wake_respects_causality():
+    """Nothing beyond the radius the group velocity has had time to reach.
+
+    Without this the pattern exists everywhere the instant it is shed, which
+    is not a wave at all.
+    """
+    f = _wake()
+    f.advance(0.0)
+    f.set_source([0.0, 0.0, 0.0], [3.0, 0.0, 0.0])
+    f.advance(2.0)
+    beyond = f.group_speed * 2.0 + 10.0
+    assert float(abs(f.wake_height(beyond, 0.0))) == 0.0, \
+        "wake found outside its own light cone"
+
+
+def test_wake_decays_with_distance():
+    f = _wake(lifetime=1.0e6, decay_length=20.0)
+    f.advance(0.0)
+    f.set_source([0.0, 0.0, 0.0], [3.0, 0.0, 0.0])
+    f.advance(60.0)                      # long enough to reach both radii
+    r = np.linspace(5.0, 60.0, 400)
+    env = np.abs(f.wake_height(r, 0.0))
+    near, far = float(env[:200].max()), float(env[200:].max())
+    assert far < near, f"wake does not decay: near {near}, far {far}"
+
+
+def test_wake_grows_with_speed():
+    def peak(speed):
+        f = _wake()
+        f.advance(0.0)
+        f.set_source([0.0, 0.0, 0.0], [speed, 0.0, 0.0])
+        f.advance(5.0)
+        r = np.linspace(0.0, f.group_speed * 5.0, 300)
+        return float(np.max(np.abs(f.wake_height(r, 0.0))))
+    slow, fast = peak(1.0), peak(3.0)
+    assert fast > slow, f"wake did not grow with speed: {slow} -> {fast}"
+
+
+def test_wake_superposes_on_the_base_field():
+    """height == base + wake, exactly. The whole point of the composition."""
+    f = _wake(base="fft")
+    t_end = _drive(f)
+    f.advance(t_end)
+    g = np.linspace(0.0, 100.0, 23)
+    gx, gy = np.meshgrid(g, g, indexing="ij")
+    total = np.asarray(f.height(gx, gy))
+    parts = np.asarray(f.base.height(gx, gy)) + f.wake_height(gx, gy)
+    assert np.allclose(total, parts, atol=1e-12), "superposition is not a plain sum"
+
+
+def test_wake_zero_amplitude_is_exactly_the_base():
+    """Turning the wake off must leave the sea bit-for-bit unchanged."""
+    f = _wake(base="fft", amplitude=0.0)
+    t_end = _drive(f)
+    f.advance(t_end)
+    g = np.linspace(0.0, 100.0, 17)
+    gx, gy = np.meshgrid(g, g, indexing="ij")
+    assert np.array_equal(np.asarray(f.height(gx, gy)),
+                          np.asarray(f.base.height(gx, gy))), \
+        "amplitude=0 changed the base sea"
+
+
+def test_wake_trail_is_bounded():
+    """Cost per query is linear in the trail, so it must not grow forever."""
+    f = _wake(max_samples=16)
+    _drive(f, steps=400)
+    assert len(f._trail) <= 16, f"trail grew to {len(f._trail)}"
+
+
+def test_wake_is_independent_of_sampling_rate():
+    """Halving the physics timestep must not change the wake.
+
+    It did: rings were shed with a fixed amplitude each, so the sum counted
+    samples instead of integrating along the track, and amplitude=0.15 came
+    out as a 1.49 m wave. Each ring now carries the arc length it stands for.
+    """
+    def peak(dt, steps, speed=4.0):
+        spec = SPECTRA.create("jonswap", hs=2.0, tp=7.0)
+        f = FIELDS.create("wake", spectrum=spec, tile_size=128.0, resolution=64,
+                          base="flat", amplitude=0.15, wavelength=6.0,
+                          max_samples=600, min_spacing=0.0, min_interval=0.0)
+        for i in range(steps):
+            t = i * dt
+            f.advance(t)
+            f.set_source([speed * t, 64.0, 0.0], [speed, 0.0, 0.0])
+        t_end = (steps - 1) * dt
+        f.advance(t_end)
+        x = np.linspace(speed * t_end - 70.0, speed * t_end - 2.0, 500)
+        return float(np.max(np.abs(f.wake_height(x, 64.0))))
+
+    coarse, fine = peak(0.1, 121), peak(0.025, 481)
+    rel = abs(fine - coarse) / max(coarse, 1e-12)
+    assert rel < 0.05, f"wake changed {rel:.1%} when the timestep changed"
+
+
+def test_wake_opens_near_the_kelvin_angle():
+    """The wedge is not drawn anywhere - it falls out of the superposition.
+
+    A deep-water ship wake has a 19.47 degree half-angle, independent of
+    speed. A single wavenumber and a threshold-based measurement will not hit
+    that exactly, but landing in the right neighbourhood is real evidence the
+    rings and the group velocity are doing the work.
+    """
+    spec = SPECTRA.create("jonswap", hs=2.0, tp=7.0)
+    f = FIELDS.create("wake", spectrum=spec, tile_size=128.0, resolution=64,
+                      base="flat", amplitude=0.15, wavelength=6.0,
+                      max_samples=600, min_spacing=0.0, min_interval=0.0)
+    speed, dt, steps = 4.0, 0.05, 241
+    for i in range(steps):
+        t = i * dt
+        f.advance(t)
+        f.set_source([speed * t, 64.0, 0.0], [speed, 0.0, 0.0])
+    t_end = (steps - 1) * dt
+    f.advance(t_end)
+    hull_x = speed * t_end
+
+    ys = np.linspace(64.0 - 40.0, 64.0 + 40.0, 321)
+    angles = []
+    for astern in (10.0, 20.0, 30.0):
+        lat = np.abs(f.wake_height(hull_x - astern, ys))
+        assert lat.max() > 0.0, f"no wake {astern} m astern"
+        edge = np.max(np.abs(ys[lat > 0.15 * lat.max()] - 64.0))
+        angles.append(math.degrees(math.atan(edge / astern)))
+    mean = sum(angles) / len(angles)
+    assert 12.0 < mean < 30.0, f"half-angle {mean:.1f} deg is nowhere near Kelvin's 19.47"
+
+
 TESTS = [
     ("registries populated", test_registries_populated, False),
     ("unknown name gives a helpful error", test_unknown_name_is_helpful, False),
@@ -870,6 +1035,16 @@ TESTS = [
     ("damping: cannot reverse the velocity", test_damping_cannot_reverse_the_velocity, True),
     ("composite: sums its models", test_composite_sums_its_models, True),
     ("damping: stops the energy pump", test_damping_stops_the_energy_pump, True),
+    ("wake: needs motion", test_wake_needs_motion, True),
+    ("wake: appears behind a moving hull", test_wake_appears_behind_a_moving_hull, True),
+    ("wake: respects causality", test_wake_respects_causality, True),
+    ("wake: decays with distance", test_wake_decays_with_distance, True),
+    ("wake: grows with speed", test_wake_grows_with_speed, True),
+    ("wake: superposes on the base field", test_wake_superposes_on_the_base_field, True),
+    ("wake: zero amplitude leaves the base alone", test_wake_zero_amplitude_is_exactly_the_base, True),
+    ("wake: trail is bounded", test_wake_trail_is_bounded, True),
+    ("wake: independent of sampling rate", test_wake_is_independent_of_sampling_rate, True),
+    ("wake: opens near the Kelvin angle", test_wake_opens_near_the_kelvin_angle, True),
 ]
 
 
