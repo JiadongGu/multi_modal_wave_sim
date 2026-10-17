@@ -161,6 +161,7 @@ class MultiModalWaveSimExtension(_ExtBase):
         # settling down: measured on flat water at 1.594 Hz, 23.8 mm peak to
         # peak, constant to four significant figures over 40 s.
         self.force_lead = FORCE_LEAD_STEPS
+        self._sweep = None
         self.thruster = None
         self._keys = set()
         self._kb_sub = None
@@ -800,6 +801,14 @@ class MultiModalWaveSimExtension(_ExtBase):
             return
 
         self._csv = open(path, "w", newline="")
+        # A recording that does not say what produced it is close to useless a
+        # day later. Two sweeps have already been confounded - one by changing
+        # two things at once, one by four runs overwriting the same filename -
+        # so the conditions go in the file itself, not in anyone's memory.
+        self._csv.write(
+            f"# force_lead={self.force_lead} field={self._field_name}"
+            f" field_kwargs={self._field_kwargs}"
+            f" mass={getattr(self.vessel, 'mass', None)}\n")
         self._csv_writer = csv.writer(self._csv)
         self._csv_writer.writerow([
             "step", "t", "x", "y", "z", "water", "depth", "tilt_deg",
@@ -807,6 +816,62 @@ class MultiModalWaveSimExtension(_ExtBase):
         ])
         self._csv_rows = 0
         self._log(f"recording to {path} (one row per step)", BANNER_LEVEL)
+
+    def sweep_lead(self, values=(0.0, 0.5, 1.0, 1.5, 2.0, 3.0),
+                   settle: float = 8.0, measure: float = 20.0, prefix=None):
+        """Sweep force_lead automatically, one recording per value.
+
+            E.get().sweep_lead()
+
+        Driven from the physics callback rather than by hand, because hand
+        timing is how the last two attempts went wrong: the settings were
+        changed two at a time, and four runs wrote to one filename. Each value
+        gets `settle` seconds to reach steady state, which is the other thing
+        that caught us out - a limit cycle measured while it is still growing
+        reads as a much smaller one - and then `measure` seconds recorded to
+        its own file.
+        """
+        from .paths import output
+
+        values = [float(v) for v in values]
+        if not values:
+            raise ValueError("sweep_lead needs at least one value")
+        self._sweep = {
+            "values": values, "i": -1, "settle": float(settle),
+            "measure": float(measure),
+            "prefix": str(prefix) if prefix else None,
+            "phase": "settle", "until": 0.0, "output": output,
+        }
+        self._sweep_advance()
+
+    def _sweep_path(self, lead):
+        name = f"lead_{lead:.2f}".replace(".", "p") + ".csv"
+        pre = self._sweep["prefix"]
+        return f"{pre}{name}" if pre else self._sweep["output"](name)
+
+    def _sweep_advance(self) -> None:
+        """settle -> measure -> next value. Called from the physics step."""
+        sw = self._sweep
+        if sw is None:
+            return
+        if sw["phase"] == "settle" and sw["i"] >= 0:
+            self.record(self._sweep_path(sw["values"][sw["i"]]))
+            sw["phase"] = "measure"
+            sw["until"] = self._sim_time + sw["measure"]
+            return
+        if sw["phase"] == "measure":
+            self.record(None)
+        sw["i"] += 1
+        if sw["i"] >= len(sw["values"]):
+            self._sweep = None
+            self._log("sweep finished", BANNER_LEVEL)
+            return
+        lead = sw["values"][sw["i"]]
+        self.force_lead = lead
+        sw["phase"] = "settle"
+        sw["until"] = self._sim_time + sw["settle"]
+        self._log(f"sweep: force_lead = {lead} (settling {sw['settle']:.0f}s)",
+                  BANNER_LEVEL)
 
     def _record_row(self, state, wrench) -> None:
         import numpy as _np
@@ -994,6 +1059,8 @@ class MultiModalWaveSimExtension(_ExtBase):
 
         self._step_count += 1
         self._sim_time += dt
+        if self._sweep is not None and self._sim_time >= self._sweep["until"]:
+            self._sweep_advance()
 
         if self.field is not None:
             self.field.advance(self._sim_time)
