@@ -245,6 +245,15 @@ class WaveField(ABC):
                 pv = primvars.CreatePrimvar(
                     "displayColor", Sdf.ValueTypeNames.Color3fArray,
                     UsdGeom.Tokens.vertex)
+            # Set the interpolation every time, not only on creation.
+            # UsdGeomGprim DECLARES primvars:displayColor as part of its
+            # schema, with interpolation "constant". So GetPrimvar returns a
+            # valid primvar before anything has been authored, the branch
+            # above never runs, and the interpolation stays constant - under
+            # which USD uses the FIRST value for the whole mesh and throws
+            # the other 16383 away. Every per-vertex colour this field has
+            # ever produced was discarded here.
+            pv.SetInterpolation(UsdGeom.Tokens.vertex)
             pv.Set(Vt.Vec3fArray.FromNumpy(
                 np.asarray(colors, dtype=np.float32)))
         # Hydra culls against the extent. A stale one hides parts of the
