@@ -984,6 +984,56 @@ def test_drag_still_accepts_a_scalar():
     assert np.allclose(d.quadratic[:3], expect), f"{d.quadratic[:3]} != {expect}"
 
 
+def test_thruster_steers_by_vectoring():
+    """Helm must produce a side force and a yaw moment, not just imbalance.
+
+    Differential thrust alone gave a 5.2 m boat a 29 s turning circle. An
+    outboard steers by pointing, which is both how the real boat works and
+    an order of magnitude more effective.
+    """
+    th = FORCES.create("thruster", thrust=1890.0, length=5.2, beam=2.21, draft=0.385)
+    th.set_drive(1.0, 1.0)
+    w = th.wrench(BodyState(), None, 0.0)
+    assert w.force[1] < -100.0, f"full helm gave side force {w.force[1]}"
+    assert w.moment[2] > 1000.0, f"full helm gave yaw moment {w.moment[2]}"
+
+
+def test_thruster_runs_straight_with_no_helm():
+    """No helm, no side force and no yaw - or the boat cannot hold a course."""
+    th = FORCES.create("thruster", thrust=1890.0, length=5.2, beam=2.21, draft=0.385)
+    th.set_drive(1.0, 0.0)
+    w = th.wrench(BodyState(), None, 0.0)
+    assert abs(w.force[1]) < 1e-9, f"side force without helm: {w.force[1]}"
+    assert abs(w.moment[2]) < 1e-9, f"yaw moment without helm: {w.moment[2]}"
+    assert w.force[0] > 0.0, "ahead command did not push forward"
+
+
+def test_thruster_pivots_with_no_way_on():
+    """Both screws opposed must still turn the hull, not cancel out.
+
+    The side force follows |command|, not the signed command, precisely so
+    that a pivot turn does not have the two legs cancelling each other.
+    """
+    th = FORCES.create("thruster", thrust=1890.0, length=5.2, beam=2.21, draft=0.385)
+    th.set_drive(0.0, 1.0)
+    w = th.wrench(BodyState(), None, 0.0)
+    assert abs(w.force[0]) < 1e-9, f"pivot should not drive ahead: {w.force[0]}"
+    assert w.moment[2] > 500.0, f"pivot yaw moment too small: {w.moment[2]}"
+
+
+def test_yaw_damping_uses_the_side_not_the_plan():
+    """Yaw sweeps the hull's side along its length, not its plan area.
+
+    The lumped-lever version was 4.4x too large and made the boat untouchable
+    on the helm.
+    """
+    lx, ly, lz = 5.20, 2.21, 0.77
+    d = FORCES.create("damping", extents=(lx, ly, lz))
+    expect = WATER_DENSITY * 1.0 / 64.0 * lz * lx**4
+    assert abs(d.quadratic[5] - expect) < 1.0, f"{d.quadratic[5]} != {expect}"
+    assert d.quadratic[5] < 20000.0, "yaw damping still flat-plate sized"
+
+
 TESTS = [
     ("registries populated", test_registries_populated, False),
     ("unknown name gives a helpful error", test_unknown_name_is_helpful, False),
@@ -1068,6 +1118,10 @@ TESTS = [
     ("wake: opens near the Kelvin angle", test_wake_opens_near_the_kelvin_angle, True),
     ("damping: lower ahead than abeam", test_drag_is_lower_ahead_than_abeam, True),
     ("damping: scalar Cd still works", test_drag_still_accepts_a_scalar, True),
+    ("damping: yaw uses the side, not the plan", test_yaw_damping_uses_the_side_not_the_plan, True),
+    ("thruster: steers by vectoring", test_thruster_steers_by_vectoring, True),
+    ("thruster: runs straight with no helm", test_thruster_runs_straight_with_no_helm, True),
+    ("thruster: pivots with no way on", test_thruster_pivots_with_no_way_on, True),
 ]
 
 

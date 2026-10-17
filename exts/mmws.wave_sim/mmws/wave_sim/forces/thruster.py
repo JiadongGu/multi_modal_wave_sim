@@ -40,7 +40,8 @@ class TwinScrewThruster(ForceModel):
 
     def __init__(self, thrust: float = 1000.0, positions=None,
                  length: float = 1.0, beam: float = 1.0, draft: float = 0.3,
-                 ventilate: bool = True) -> None:
+                 ventilate: bool = True, steer_max: float = 0.61,
+                 differential: float = 0.3) -> None:
         if thrust < 0.0:
             raise ValueError(f"thrust must be non-negative, got {thrust}")
         self.thrust = float(thrust)
@@ -59,6 +60,15 @@ class TwinScrewThruster(ForceModel):
         # ahead). Set by whatever is driving: the keyboard, a controller, a
         # ROS topic later.
         self.command = np.zeros(len(self.positions))
+        # An outboard steers by pointing, not by thrust imbalance. A twin
+        # screw turning on differential thrust alone is genuinely slow - 29 s
+        # for a full circle here - and no small boat is driven that way.
+        # steer_max is the deflection at full helm, 0.61 rad = 35 deg, typical
+        # of an outboard. `differential` keeps some imbalance so the hull can
+        # still pivot with no way on.
+        self.steer_max = float(steer_max)
+        self.differential = float(differential)
+        self.steer = 0.0
 
     def set_drive(self, surge: float = 0.0, turn: float = 0.0) -> None:
         """Mix surge and turn into per-screw commands.
@@ -70,7 +80,9 @@ class TwinScrewThruster(ForceModel):
         """
         surge = float(np.clip(surge, -1.0, 1.0))
         turn = float(np.clip(turn, -1.0, 1.0))
-        port, starboard = surge - turn, surge + turn
+        self.steer = turn * self.steer_max
+        port, starboard = (surge - self.differential * turn,
+                           surge + self.differential * turn)
         biggest = max(abs(port), abs(starboard), 1.0)
         self.command = np.array([port, starboard]) / biggest
 
@@ -92,7 +104,13 @@ class TwinScrewThruster(ForceModel):
                 return Wrench()
 
         force = np.zeros((len(self.positions), 3))
-        force[:, 0] = self.thrust * command          # body +x is forward
+        # Thrust vectored by the steering angle. The axial part follows the
+        # signed command, so astern is astern; the side force follows its
+        # magnitude, because the leg points the same way whichever way the
+        # screw turns - otherwise a pivot turn has the two screws cancelling
+        # each other's side force exactly.
+        force[:, 0] = self.thrust * command * np.cos(self.steer)
+        force[:, 1] = -self.thrust * np.abs(command) * np.sin(self.steer)
         arm = self.positions - np.asarray(body.center_of_mass, dtype=float)
         moment = np.cross(arm, force)
         return Wrench(force.sum(axis=0), moment.sum(axis=0))

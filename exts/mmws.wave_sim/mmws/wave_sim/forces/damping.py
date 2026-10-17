@@ -77,7 +77,10 @@ class LinearQuadraticDamping(ForceModel):
     # A scalar still works and is applied to all three, for anyone who wants
     # the old isotropic behaviour or is modelling something that is not a
     # hull.
-    DRAG_SURGE_SWAY_HEAVE = (0.10, 1.0, 1.0)
+    # 0.05 ahead rather than 0.10: a planing hull rises and its resistance
+    # collapses, and with no lift model the only place that can go is the
+    # drag coefficient. Labelled as the stand-in it is, not a measured Cd.
+    DRAG_SURGE_SWAY_HEAVE = (0.05, 1.0, 1.0)
 
     def __init__(self, linear=None, quadratic=None, extents=None,
                  drag_coefficient=None, timestep: float = 1.0 / 60.0,
@@ -95,14 +98,28 @@ class LinearQuadraticDamping(ForceModel):
                   else np.broadcast_to(
                       np.asarray(drag_coefficient, dtype=float).ravel(), (3,)))
             q = 0.5 * density * cd * areas
-            # Rotational: same drag over a representative lever arm, squared
-            # once for the moment arm and once for the velocity it sees. Roll
-            # and pitch sweep the hull broadside through the water whatever it
-            # is doing in surge, so they take the bluff coefficient rather
-            # than the streamlined one.
-            arm = np.array([max(ly, lz), max(lx, lz), max(lx, ly)]) / 2.0
-            q_rot = 0.5 * density * float(np.max(cd[1:])) * areas
-            quadratic = np.concatenate([q, q_rot * arm**2])
+            # Rotational, integrated along the hull rather than lumped at a
+            # single radius. A body rotating at omega has local speed omega*r,
+            # so drag per unit span is 0.5 rho Cd (omega r)^2 and its moment
+            # is that times r again:
+            #
+            #     N = 2 * int(0, S/2) 0.5 rho Cd w (omega r)^2 r dr
+            #       = rho Cd w omega^2 S^4 / 64
+            #
+            # with S the span the rotation sweeps and w the width of the
+            # strip. Yaw sweeps the SIDE of the hull along its length; roll
+            # sweeps the bottom across the beam; pitch sweeps the bottom along
+            # the length. The previous version used the plan area and one
+            # lever for all three, which left yaw damping 4.4x too large: a
+            # 5.2 m boat needed 29 s to turn around. Rotation is broadside
+            # whatever the hull is doing in surge, so it takes the bluff
+            # coefficient.
+            cd_rot = float(np.max(cd[1:]))
+            quadratic = np.concatenate([q, density * cd_rot / 64.0 * np.array([
+                lx * ly**4,     # roll  about x
+                ly * lx**4,     # pitch about y
+                lz * lx**4,     # yaw   about z
+            ])])
         self.quadratic = np.asarray(quadratic, dtype=float).ravel()
         if self.quadratic.size != 6:
             raise ValueError(f"quadratic must have 6 entries, got {self.quadratic.size}")
