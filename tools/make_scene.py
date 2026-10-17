@@ -193,12 +193,25 @@ print(f"  sun          /World/Sun   elevation {SUN_ELEV:.0f} deg, heading {SUN_A
 water_mat = _surface(stage, "/World/Looks/Water",
                      diffuse=(0.015, 0.055, 0.075), roughness=0.06, metallic=0.0,
                      read_display_color=True)
+# Define the mesh if it is not there yet, rather than giving up on binding.
+# This script runs before the extension has stepped, so /World/Water does not
+# exist, and the old message said "press Play once, then re-run" - which
+# nobody ever did. The water therefore rendered with Kit's DEFAULT material,
+# which ignores displayColor, so every per-vertex colour the field produced
+# was painted over: the foam never showed, and neither did the wake tint.
+# An empty mesh here is harmless; the extension fills in its points on the
+# first physics step.
 water = stage.GetPrimAtPath("/World/Water")
-if water:
-    UsdShade.MaterialBindingAPI.Apply(water).Bind(water_mat)
-    print("  water material bound to /World/Water  (dark, roughness 0.06)")
-else:
-    print("  no /World/Water yet - press Play once, then re-run to bind the water")
+if not water or not water.IsA(UsdGeom.Mesh):
+    mesh = UsdGeom.Mesh.Define(stage, "/World/Water")
+    # The same attributes write_mesh would author, so it finds a complete
+    # prim rather than a half-built one.
+    mesh.CreatePointsAttr()
+    mesh.CreateSubdivisionSchemeAttr().Set("none")
+    mesh.CreateDoubleSidedAttr().Set(True)
+    water = mesh.GetPrim()
+UsdShade.MaterialBindingAPI.Apply(water).Bind(water_mat)
+print("  water material bound to /World/Water  (reads displayColor)")
 
 hull_mat = _surface(stage, "/World/Looks/Hull",
                     diffuse=(0.82, 0.84, 0.86), roughness=0.35, metallic=0.0)
