@@ -188,10 +188,20 @@ class MultiModalWaveSimExtension(_ExtBase):
         # settling down: measured on flat water at 1.594 Hz, 23.8 mm peak to
         # peak, constant to four significant figures over 40 s.
         self.force_lead = FORCE_LEAD_STEPS
-        # Same idea for orientation. 0.0 keeps the old behaviour;
-        # the measurement that justifies a non-zero default is the
-        # tilt column of a sweep.
-        self.rot_lead = 0.0
+        # The same compensation for orientation, and it has to match: with
+        # the position led 1.5 steps and the orientation left a step stale,
+        # the force magnitude was delay-compensated while its DIRECTION
+        # lagged the body it acted on, which does work on the rotational mode
+        # every cycle. Measured on flat water, Whaler, tilt peak to peak:
+        #
+        #     rot_lead  0.0 -> 4.238 deg and growing
+        #               0.5 -> 1.439 deg, decaying
+        #               1.0 -> 0.119 deg, decaying
+        #               1.5 -> 0.000 deg, dead still
+        #
+        # Set from the same constant, so the two halves of the pose cannot
+        # drift apart again.
+        self.rot_lead = FORCE_LEAD_STEPS
         self._sweep = None
         self._autorun_sub = None
         self.thruster = None
