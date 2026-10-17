@@ -1034,6 +1034,24 @@ def test_yaw_damping_uses_the_side_not_the_plan():
     assert d.quadratic[5] < 20000.0, "yaw damping still flat-plate sized"
 
 
+def test_foam_coverage_is_physical():
+    """Whitecaps cover a few percent of a rough sea, not a third of it.
+
+    Monahan's fit gives about 1% at 10 m/s of wind and 4% at 15 m/s. The old
+    defaults (threshold 0.55, decay 2.5 s) reached 35% on a steep sea and 99%
+    at choppiness 2.3, because foam accumulated faster than it decayed - tau
+    was long against the wave period, and np.maximum keeps a cell white until
+    it has faded.
+    """
+    spec = SPECTRA.create("jonswap", hs=2.26, tp=4.0, spread_s=5.0)
+    f = FIELDS.create("fft", spectrum=spec, tile_size=128.0, resolution=128,
+                      seed=1, choppiness=1.0)
+    for i in range(1200):                       # 20 s, long enough to settle
+        f.advance(i / 60.0)
+    cover = float((f._foam > 0.05).mean()) * 100.0
+    assert 0.2 < cover < 8.0, f"foam covers {cover:.1f}% of a steep sea"
+
+
 TESTS = [
     ("registries populated", test_registries_populated, False),
     ("unknown name gives a helpful error", test_unknown_name_is_helpful, False),
@@ -1122,6 +1140,7 @@ TESTS = [
     ("thruster: steers by vectoring", test_thruster_steers_by_vectoring, True),
     ("thruster: runs straight with no helm", test_thruster_runs_straight_with_no_helm, True),
     ("thruster: pivots with no way on", test_thruster_pivots_with_no_way_on, True),
+    ("foam: coverage is physical", test_foam_coverage_is_physical, True),
 ]
 
 

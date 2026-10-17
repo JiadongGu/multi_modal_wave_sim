@@ -121,7 +121,7 @@ class SpectrumPanel:
                                  "0 is a plain height field, 1 is standard, "
                                  "past ~1.5 the surface folds through itself. "
                                  "Visual only - height() is untouched")
-                chop = ui.FloatSlider(min=0.0, max=2.0)
+                chop = ui.FloatSlider(min=0.0, max=1.5)
                 self._chop = chop
                 self._chop_label = ui.Label("", width=74,
                                             style={"color": 0xFFAAAAAA})
