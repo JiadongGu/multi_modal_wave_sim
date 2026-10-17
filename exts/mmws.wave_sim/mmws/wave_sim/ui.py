@@ -419,11 +419,24 @@ class SpectrumPanel:
             achieved = float("nan")
         asked = self._sliders["hs"].model.get_value_as_float()
         note = ""
+        # Significant steepness, 2 pi Hs / (g Tp^2). Waves break near 1/7, so
+        # a sea above that is not steep - it is impossible, and what the
+        # renderer shows is a field of razor peaks that no ocean sustains.
+        # Worth saying out loud: the sliders happily go there, and the result
+        # looks like a bug in the wave model rather than a request for a sea
+        # that cannot exist.
+        steep = 2.0 * pi * asked / (9.80665 * tp * tp)
+        if steep > 0.142:
+            hs_max = 0.142 * 9.80665 * tp * tp / (2.0 * pi)
+            note = (f"\nsteepness {steep:.3f} is past breaking (1/7 = 0.143)"
+                    f" - at Tp {tp:.1f} s the limit is Hs {hs_max:.1f} m")
+        elif steep > 0.100:
+            note = f"\nsteepness {steep:.3f} - a very steep, storm sea"
         if wavelength > field.tile_size:
-            note = (f"\npeak wavelength {wavelength:.0f} m is longer than the "
+            note += (f"\npeak wavelength {wavelength:.0f} m is longer than the "
                     f"{field.tile_size:.0f} m tile - it will not fit")
         elif wavelength < 4.0 * field.cell_size:
-            note = (f"\npeak wavelength {wavelength:.1f} m is under 4 cells "
+            note += (f"\npeak wavelength {wavelength:.1f} m is under 4 cells "
                     f"({field.cell_size:.2f} m) - under-resolved")
         self._readout.text = (
             f"realised Hs {achieved:.3f} m   (asked {asked:.2f})\n"
