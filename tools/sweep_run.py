@@ -22,6 +22,7 @@ TOOLS = Path(__file__).resolve().parent
 REPO = TOOLS.parent
 
 BOAT = os.environ.get("MMWS_SWEEP_BOAT", "planing")
+ATTR = os.environ.get("MMWS_SWEEP_ATTR", "force_lead")
 VALUES = [float(v) for v in
           os.environ.get("MMWS_SWEEP_VALUES", "0,0.5,1,1.5,2,3").split(",")]
 SETTLE = float(os.environ.get("MMWS_SWEEP_SETTLE", 8.0))
@@ -40,12 +41,15 @@ if ext.vessel is None:
 # Flat water, but keep the tile the scene was built on - a smaller tile would
 # leave the hull sitting off the edge of the mesh.
 ext.select(field="flat")
+# Hold the other knob at its default so a sweep changes one thing.
+if ATTR == "rot_lead":
+    ext.force_lead = float(os.environ.get("MMWS_FORCE_LEAD", 1.5))
 
 print(f"[sweep_run] vessel {getattr(ext.vessel, 'body_path', None)} "
       f"mass {getattr(ext.vessel, 'mass', None)}")
-print(f"[sweep_run] sweeping force_lead over {VALUES}, "
+print(f"[sweep_run] sweeping {ATTR} over {VALUES}, "
       f"{SETTLE:.0f}s settle + {MEASURE:.0f}s measure each "
       f"(~{len(VALUES) * (SETTLE + MEASURE) / 60.0:.1f} min)")
 
 omni.timeline.get_timeline_interface().play()
-ext.sweep_lead(VALUES, settle=SETTLE, measure=MEASURE)
+ext.sweep_lead(VALUES, settle=SETTLE, measure=MEASURE, attr=ATTR)

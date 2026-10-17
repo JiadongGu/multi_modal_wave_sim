@@ -52,7 +52,21 @@ TRACE_STEPS = 400
 FORCE_LEAD_STEPS = 1.5
 
 
-def _lead(state, dt, steps=None):
+def _quat_mul(a, b):
+    """Hamilton product, (w, x, y, z) - the order USD's Gf.Quatd uses."""
+    import numpy as _np
+
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return _np.array([
+        aw*bw - ax*bx - ay*by - az*bz,
+        aw*bx + ax*bw + ay*bz - az*by,
+        aw*by - ax*bz + ay*bw + az*bx,
+        aw*bz + ax*by - ay*bx + az*bw,
+    ])
+
+
+def _lead(state, dt, steps=None, rot_steps=0.0):
     """state, with position extrapolated `steps` physics steps into the future.
 
     linear_velocity is body-frame (see convert.body_state_from_usd), and the
@@ -67,15 +81,28 @@ def _lead(state, dt, steps=None):
     from .forces import quat_to_matrix
 
     steps = FORCE_LEAD_STEPS if steps is None else float(steps)
-    if dt <= 0.0 or steps == 0.0:
+    rot_steps = float(rot_steps)
+    if dt <= 0.0 or (steps == 0.0 and rot_steps == 0.0):
         return state
     R = quat_to_matrix(_np.asarray(state.orientation, dtype=float))
     v_world = R @ _np.asarray(state.linear_velocity, dtype=float)
-    return replace(
+    out = replace(
         state,
         position=_np.asarray(state.position, dtype=float)
         + v_world * (steps * dt),
     )
+    if rot_steps == 0.0:
+        return out
+    # Orientation gets the same treatment as position. qdot = 0.5 q (x) w,
+    # with w the BODY-frame angular velocity, which is the frame BodyState
+    # stores it in. Without this, heave is delay-compensated and rotation is
+    # not - measured: sweeping the position lead from 0 to 3 moves heave 6x
+    # and tilt only 14%, because the surviving limit cycle is rotational.
+    q = _np.asarray(state.orientation, dtype=float)
+    w = _np.asarray(state.angular_velocity, dtype=float)
+    q = q + 0.5 * _quat_mul(q, _np.array([0.0, w[0], w[1], w[2]])) * (rot_steps * dt)
+    n = _np.linalg.norm(q)
+    return replace(out, orientation=q / n if n > 0.0 else state.orientation)
 
 
 # A distinct "argument not given" marker, because None is a real value here:
@@ -161,6 +188,10 @@ class MultiModalWaveSimExtension(_ExtBase):
         # settling down: measured on flat water at 1.594 Hz, 23.8 mm peak to
         # peak, constant to four significant figures over 40 s.
         self.force_lead = FORCE_LEAD_STEPS
+        # Same idea for orientation. 0.0 keeps the old behaviour;
+        # the measurement that justifies a non-zero default is the
+        # tilt column of a sweep.
+        self.rot_lead = 0.0
         self._sweep = None
         self._autorun_sub = None
         self.thruster = None
@@ -849,9 +880,13 @@ class MultiModalWaveSimExtension(_ExtBase):
         # day later. Two sweeps have already been confounded - one by changing
         # two things at once, one by four runs overwriting the same filename -
         # so the conditions go in the file itself, not in anyone's memory.
+        # No commas in here: a reader splitting on commas counts the
+        # metadata as a row and the whole file fails to parse, which is
+        # exactly what happened the first time this was used.
+        kw = " ".join(f"{k}={v}" for k, v in sorted(self._field_kwargs.items()))
         self._csv.write(
-            f"# force_lead={self.force_lead} field={self._field_name}"
-            f" field_kwargs={self._field_kwargs}"
+            f"# force_lead={self.force_lead} rot_lead={self.rot_lead}"
+            f" field={self._field_name} {kw}"
             f" mass={getattr(self.vessel, 'mass', None)}\n")
         self._csv_writer = csv.writer(self._csv)
         self._csv_writer.writerow([
@@ -862,7 +897,8 @@ class MultiModalWaveSimExtension(_ExtBase):
         self._log(f"recording to {path} (one row per step)", BANNER_LEVEL)
 
     def sweep_lead(self, values=(0.0, 0.5, 1.0, 1.5, 2.0, 3.0),
-                   settle: float = 8.0, measure: float = 20.0, prefix=None):
+                   settle: float = 8.0, measure: float = 20.0, prefix=None,
+                   attr: str = "force_lead"):
         """Sweep force_lead automatically, one recording per value.
 
             E.get().sweep_lead()
@@ -883,13 +919,13 @@ class MultiModalWaveSimExtension(_ExtBase):
         self._sweep = {
             "values": values, "i": -1, "settle": float(settle),
             "measure": float(measure),
-            "prefix": str(prefix) if prefix else None,
+            "prefix": str(prefix) if prefix else None, "attr": str(attr),
             "phase": "settle", "until": 0.0, "output": output,
         }
         self._sweep_advance()
 
     def _sweep_path(self, lead):
-        name = f"lead_{lead:.2f}".replace(".", "p") + ".csv"
+        name = f"{self._sweep['attr']}_{lead:.2f}".replace(".", "p") + ".csv"
         pre = self._sweep["prefix"]
         return f"{pre}{name}" if pre else self._sweep["output"](name)
 
@@ -911,10 +947,10 @@ class MultiModalWaveSimExtension(_ExtBase):
             self._log("sweep finished", BANNER_LEVEL)
             return
         lead = sw["values"][sw["i"]]
-        self.force_lead = lead
+        setattr(self, sw["attr"], lead)
         sw["phase"] = "settle"
         sw["until"] = self._sim_time + sw["settle"]
-        self._log(f"sweep: force_lead = {lead} (settling {sw['settle']:.0f}s)",
+        self._log(f"sweep: {sw['attr']} = {lead} (settling {sw['settle']:.0f}s)",
                   BANNER_LEVEL)
 
     def _record_row(self, state, wrench) -> None:
@@ -1141,7 +1177,7 @@ class MultiModalWaveSimExtension(_ExtBase):
                 if _feed is not None:
                     _feed(state.position, state.linear_velocity)
                 wrench = self.force_model.wrench(
-                    _lead(state, dt, self.force_lead), self.field,
+                    _lead(state, dt, self.force_lead, self.rot_lead), self.field,
                     self._sim_time + self.force_lead * dt,
                 )
                 self.vessel.apply(wrench)
