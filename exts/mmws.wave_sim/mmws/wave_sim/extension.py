@@ -162,6 +162,7 @@ class MultiModalWaveSimExtension(_ExtBase):
         # peak, constant to four significant figures over 40 s.
         self.force_lead = FORCE_LEAD_STEPS
         self._sweep = None
+        self._autorun_sub = None
         self.thruster = None
         self._keys = set()
         self._kb_sub = None
@@ -207,6 +208,49 @@ class MultiModalWaveSimExtension(_ExtBase):
         self._subscribe()
         self.show_ui()
         self._log("ready - standing by. A tool or the panel checkbox activates it", BANNER_LEVEL)
+
+        import os as _os
+        _auto = _os.environ.get("MMWS_AUTORUN")
+        if _auto:
+            self._autorun(_auto)
+
+    def _autorun(self, path: str) -> None:
+        """Run a Python file once the app has settled, if $MMWS_AUTORUN is set.
+
+        The Script Editor is the only way into a running Kit, and it needs a
+        human at a GUI. That makes every experiment hand-driven, which is how
+        the first two sweeps got confounded - and it makes a headless run over
+        ssh impossible. This closes that hole: the launcher sets the variable,
+        the extension execs the file a couple of seconds after startup, and
+        the whole experiment is reproducible from a shell.
+
+        Deliberately an environment variable rather than a setting in the
+        repo: it only runs what the person starting Kit chose to point it at,
+        and it leaves no trace in the stage or the config.
+        """
+        import omni.kit.app
+
+        frames = {"n": 0}
+        app = omni.kit.app.get_app()
+
+        def _tick(_event):
+            frames["n"] += 1
+            if frames["n"] < 120:            # ~2 s, so the stage and UI exist
+                return
+            self._autorun_sub = None
+            self._log(f"autorun: {path}", BANNER_LEVEL)
+            try:
+                with open(path) as fh:
+                    code = fh.read()
+                exec(compile(code, path, "exec"),
+                     {"__name__": "__mmws_autorun__", "__file__": path})
+            except Exception as exc:                  # noqa: BLE001
+                import traceback
+                self._log(f"autorun failed: {exc}\n{traceback.format_exc()}",
+                          "error")
+
+        self._autorun_sub = app.get_update_event_stream().create_subscription_to_pop(
+            _tick, name="mmws.wave_sim.autorun")
 
     def on_shutdown(self) -> None:
         global _INSTANCE
