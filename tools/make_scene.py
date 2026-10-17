@@ -138,6 +138,17 @@ def _surface(stage, path, diffuse, roughness, metallic=0.0, opacity=1.0,
         reader.CreateOutput("result", Sdf.ValueTypeNames.Float3)
         shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(
             reader.ConnectableAPI(), "result")
+        # ...and to emissiveColor as well, which is the only reason any of
+        # this is visible. The water is roughness 0.06 - very nearly a mirror
+        # - so almost every pixel of it is reflected sky and the diffuse
+        # channel contributes close to nothing. Foam and wake tint were being
+        # written to displayColor, wired to diffuse, and then drowned.
+        # Emissive does not care what is reflecting: the deep-water base is
+        # (0.015, 0.055, 0.075) and glows imperceptibly, while a bright
+        # overlay colour shows through the reflection the way an overlay
+        # should.
+        shader.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(
+            reader.ConnectableAPI(), "result")
     else:
         shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*diffuse))
     shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(float(roughness))
