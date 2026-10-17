@@ -138,20 +138,27 @@ def _surface(stage, path, diffuse, roughness, metallic=0.0, opacity=1.0,
         reader.CreateOutput("result", Sdf.ValueTypeNames.Float3)
         shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(
             reader.ConnectableAPI(), "result")
-        # ...and to emissiveColor as well, which is the only reason any of
-        # this is visible. The water is roughness 0.06 - very nearly a mirror
-        # - so almost every pixel of it is reflected sky and the diffuse
-        # channel contributes close to nothing. Foam and wake tint were being
-        # written to displayColor, wired to diffuse, and then drowned.
-        # Emissive does not care what is reflecting: the deep-water base is
-        # (0.015, 0.055, 0.075) and glows imperceptibly, while a bright
-        # overlay colour shows through the reflection the way an overlay
-        # should.
+        # Emission comes from a SEPARATE primvar, not from displayColor.
+        # The water is roughness 0.06, nearly a mirror, so the diffuse
+        # channel barely reaches the eye and an overlay has to be emissive to
+        # be seen. But making displayColor emissive lights the sea itself -
+        # the water glowed and the foam turned into lamps. wakeTint is black
+        # wherever there is no overlay, and black emits nothing, so the sea
+        # renders exactly as it would without one.
+        tint = UsdShade.Shader.Define(stage, f"{path}/WakeTint")
+        tint.CreateIdAttr("UsdPrimvarReader_float3")
+        tint.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("wakeTint")
+        tint.CreateInput("fallback", Sdf.ValueTypeNames.Float3).Set(Gf.Vec3f(0, 0, 0))
+        tint.CreateOutput("result", Sdf.ValueTypeNames.Float3)
         shader.CreateInput("emissiveColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(
-            reader.ConnectableAPI(), "result")
+            tint.ConnectableAPI(), "result")
     else:
         shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*diffuse))
     shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(float(roughness))
+    # 1.33 is water; UsdPreviewSurface defaults to 1.5, which is glass. It
+    # sets how much is reflected at a grazing angle versus straight down,
+    # which is most of what makes water read as water.
+    shader.CreateInput("ior", Sdf.ValueTypeNames.Float).Set(1.33)
     shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(float(metallic))
     shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(float(opacity))
     material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")

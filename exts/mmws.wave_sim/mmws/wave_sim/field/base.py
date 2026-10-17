@@ -190,6 +190,17 @@ class WaveField(ABC):
         curves.GetWidthsAttr().Set(Vt.FloatArray([self.cell_size * 0.06]))
         return curves
 
+    def overlay_colors(self):
+        """Per-vertex EMISSIVE colour, or None. A debug overlay, not the sea.
+
+        Separate from vertex_colors because the two are asked different
+        questions by the material: displayColor is what the water looks like
+        and is lit and reflected like water, while this is painted on top and
+        does not care about the lighting. A field with nothing to overlay
+        returns None and the primvar is never written.
+        """
+        return None
+
     def vertex_colors(self):
         """Per-point RGB for the surface, or None to leave it unshaded.
 
@@ -233,6 +244,17 @@ class WaveField(ABC):
             mesh.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(indices))
 
         mesh.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(pts))
+
+        overlay = self.overlay_colors()
+        if overlay is not None:
+            primvars = UsdGeom.PrimvarsAPI(mesh)
+            ov = primvars.GetPrimvar("wakeTint")
+            if not ov:
+                ov = primvars.CreatePrimvar(
+                    "wakeTint", Sdf.ValueTypeNames.Color3fArray,
+                    UsdGeom.Tokens.vertex)
+            ov.SetInterpolation(UsdGeom.Tokens.vertex)
+            ov.Set(Vt.Vec3fArray.FromNumpy(np.asarray(overlay, dtype=np.float32)))
 
         colors = self.vertex_colors()
         if colors is not None:

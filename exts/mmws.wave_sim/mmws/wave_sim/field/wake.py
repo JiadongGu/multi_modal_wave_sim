@@ -308,30 +308,29 @@ class WakeField(WaveField):
         return self.base.mesh_topology()
 
     def vertex_colors(self):
-        """The base's colours, brightened where the wake is.
+        """The sea's own colour, untouched. The wake tint is NOT in here.
 
-        Without this the wake is physically present and visually invisible:
-        a few centimetres of it does not read against a half-metre sea, and
-        on a 5 m boat that is the normal case. Tinting is preferable to
-        exaggerating the geometry, because the surface the hull floats on
-        stays the surface you are looking at.
+        Overloading displayColor with both the water's colour and a debug
+        overlay meant the overlay had to be emissive to show through the
+        surface's reflection - and that made the water itself glow. They are
+        different things and they now travel in different primvars.
         """
-        base = self.base.vertex_colors()
+        return self.base.vertex_colors()
+
+    def overlay_colors(self):
+        """Per-vertex overlay colour, or None. Written to its own primvar.
+
+        Orange on the wake's crests, green in its troughs, black where there
+        is no wake - black because this drives emission, and black emits
+        nothing, so the sea renders exactly as it would without the overlay.
+        """
         if not self.highlight or self._mesh_wake is None:
-            return base
-        if base is None:
-            deep = np.array([[0.015, 0.055, 0.075]])
-            base = np.repeat(deep, self._mesh_wake.size, axis=0)
-        else:
-            base = np.asarray(base, dtype=float)
-        # Signed, so crests and troughs of the wake read differently - a wake
-        # is a wave train, and colouring |eta| would show it as a series of
-        # bars at twice the real frequency.
+            return None
         w = np.clip(self._mesh_wake[:, None] / self.highlight_scale, -1.0, 1.0)
         crest = np.array([self.CREST_COLOUR])
         trough = np.array([self.TROUGH_COLOUR])
         tint = np.where(w > 0.0, crest, trough)
-        return base * (1.0 - np.abs(w)) + tint * np.abs(w)
+        return tint * np.abs(w)
 
     def __repr__(self) -> str:
         return (f"WakeField(base={self.base_name!r}, "
