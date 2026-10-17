@@ -202,6 +202,9 @@ class MultiModalWaveSimExtension(_ExtBase):
         # Set from the same constant, so the two halves of the pose cannot
         # drift apart again.
         self.rot_lead = FORCE_LEAD_STEPS
+        # Thrust per screw as a fraction of the vessel's weight.
+        # Set before binding a vessel to change it.
+        self.thrust_fraction = 0.25
         self._sweep = None
         self._autorun_sub = None
         self.thruster = None
@@ -1020,10 +1023,15 @@ class MultiModalWaveSimExtension(_ExtBase):
                     FORCES.create("damping", extents=extents),
                     FORCES.create(
                         "thruster",
-                        # 2% of the vessel's own weight per screw. Not a
+                        # A quarter of the vessel's weight per screw. Not a
                         # propeller curve - a number, chosen so that when the
-                        # hull moves you know exactly what moved it.
-                        thrust=0.02 * bridge.mass * 9.80665,
+                        # hull moves you know exactly what moved it - but it
+                        # has to be the right order of magnitude or the boat
+                        # is unusable. A 90 hp outboard on a 771 kg Whaler is
+                        # around 25% of its weight in static thrust, which
+                        # against the surge drag gives about 13 knots.
+                        # 2% gave 3.7 knots and felt broken.
+                        thrust=self.thrust_fraction * bridge.mass * 9.80665,
                         length=float(extents[0]), beam=float(extents[1]),
                         draft=float(extents[2]) * 0.5,
                     ),

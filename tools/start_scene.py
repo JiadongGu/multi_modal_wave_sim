@@ -24,6 +24,8 @@ FIELD = os.environ.get("MMWS_FIELD", "fft")
 HS = float(os.environ.get("MMWS_HS", 0.5))
 TP = float(os.environ.get("MMWS_TP", 4.0))
 PLAY = os.environ.get("MMWS_PLAY", "1") != "0"
+# Thrust per screw, as a fraction of the vessel weight.
+THRUST = float(os.environ.get("MMWS_THRUST", 0.25))
 
 print(f"[start_scene] building {BOAT}")
 g = {"BOAT": BOAT, "SUN_ELEV": 58.0, "SUN_AZ": 135.0, "BRIGHTNESS": 0.45}
@@ -32,6 +34,7 @@ exec(open(TOOLS / "make_scene.py").read(), g)
 import mmws.wave_sim.extension as E                      # noqa: E402
 
 ext = E.get()
+ext.thrust_fraction = THRUST      # before binding - bind builds the thruster
 ext.activate(True)
 if ext.vessel is None:
     ext.bind_vessel()
@@ -51,6 +54,8 @@ ext.keyboard_drive(True)
 
 print(f"[start_scene] {BOAT} on {FIELD}, Hs={HS} Tp={TP}")
 print(f"[start_scene] force_lead={ext.force_lead} rot_lead={ext.rot_lead}")
+if ext.thruster is not None:
+    print(f"[start_scene] thrust {ext.thruster.thrust:.0f} N per screw")
 print("[start_scene] drive: I/K ahead and astern, J/L turn")
 if PLAY:
     omni.timeline.get_timeline_interface().play()

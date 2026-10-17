@@ -62,8 +62,25 @@ from .base import BodyState, ForceModel, Wrench
 class LinearQuadraticDamping(ForceModel):
     """tau = -(D_lin + D_quad * |nu|) nu, in the body frame."""
 
+    # Drag is not the same in every direction, and treating it as if it were
+    # is why a 5.3 m speedboat had a top speed of 0.6 m/s. A hull is
+    # streamlined going ahead and bluff going sideways:
+    #
+    #   surge  a Whaler 170 does ~16.5 m/s on 90 hp, so its resistance there
+    #          is about P*eta/v = 2.2 kN, an effective 8 N/(m/s)^2 against the
+    #          851 that Cd = 1 on the frontal area gives. Hence ~0.1, and even
+    #          that is generous once a planing hull is up and running.
+    #   sway   beam-on, a hull really is close to a flat plate.
+    #   heave  likewise, and this is the term that damps the vertical mode,
+    #          so it is left alone.
+    #
+    # A scalar still works and is applied to all three, for anyone who wants
+    # the old isotropic behaviour or is modelling something that is not a
+    # hull.
+    DRAG_SURGE_SWAY_HEAVE = (0.10, 1.0, 1.0)
+
     def __init__(self, linear=None, quadratic=None, extents=None,
-                 drag_coefficient: float = 1.0, timestep: float = 1.0 / 60.0,
+                 drag_coefficient=None, timestep: float = 1.0 / 60.0,
                  density: float = WATER_DENSITY, height: float = None) -> None:
         if timestep <= 0.0:
             raise ValueError(f"timestep must be positive, got {timestep}")
@@ -73,11 +90,19 @@ class LinearQuadraticDamping(ForceModel):
                 raise ValueError("damping needs either `quadratic` or hull `extents`")
             lx, ly, lz = (float(v) for v in np.asarray(extents, dtype=float).ravel()[:3])
             areas = np.array([ly * lz, lx * lz, lx * ly])
-            q = 0.5 * density * drag_coefficient * areas
+            cd = (np.array(self.DRAG_SURGE_SWAY_HEAVE, dtype=float)
+                  if drag_coefficient is None
+                  else np.broadcast_to(
+                      np.asarray(drag_coefficient, dtype=float).ravel(), (3,)))
+            q = 0.5 * density * cd * areas
             # Rotational: same drag over a representative lever arm, squared
-            # once for the moment arm and once for the velocity it sees.
+            # once for the moment arm and once for the velocity it sees. Roll
+            # and pitch sweep the hull broadside through the water whatever it
+            # is doing in surge, so they take the bluff coefficient rather
+            # than the streamlined one.
             arm = np.array([max(ly, lz), max(lx, lz), max(lx, ly)]) / 2.0
-            quadratic = np.concatenate([q, q * arm**2])
+            q_rot = 0.5 * density * float(np.max(cd[1:])) * areas
+            quadratic = np.concatenate([q, q_rot * arm**2])
         self.quadratic = np.asarray(quadratic, dtype=float).ravel()
         if self.quadratic.size != 6:
             raise ValueError(f"quadratic must have 6 entries, got {self.quadratic.size}")

@@ -963,6 +963,27 @@ def test_wake_opens_near_the_kelvin_angle():
     assert 12.0 < mean < 30.0, f"half-angle {mean:.1f} deg is nowhere near Kelvin's 19.47"
 
 
+def test_drag_is_lower_ahead_than_abeam():
+    """A hull is streamlined going forward and bluff going sideways.
+
+    Cd = 1 on every axis gave a 5.3 m speedboat a top speed of 0.6 m/s,
+    because surge drag came out at 851 N/(m/s)^2 against the ~8 implied by a
+    Whaler 170 doing 16.5 m/s on 90 hp.
+    """
+    d = FORCES.create("damping", extents=(5.20, 2.21, 0.77))
+    surge, sway, heave = d.quadratic[0], d.quadratic[1], d.quadratic[2]
+    assert surge < sway, f"surge drag {surge} should be below sway {sway}"
+    assert surge < heave, f"surge drag {surge} should be below heave {heave}"
+    assert surge < 200.0, f"surge drag {surge} is still flat-plate sized"
+
+
+def test_drag_still_accepts_a_scalar():
+    """The isotropic form has to keep working for anything that is not a hull."""
+    d = FORCES.create("damping", extents=(2.0, 1.0, 1.0), drag_coefficient=1.0)
+    expect = 0.5 * WATER_DENSITY * 1.0 * np.array([1.0 * 1.0, 2.0 * 1.0, 2.0 * 1.0])
+    assert np.allclose(d.quadratic[:3], expect), f"{d.quadratic[:3]} != {expect}"
+
+
 TESTS = [
     ("registries populated", test_registries_populated, False),
     ("unknown name gives a helpful error", test_unknown_name_is_helpful, False),
@@ -1045,6 +1066,8 @@ TESTS = [
     ("wake: trail is bounded", test_wake_trail_is_bounded, True),
     ("wake: independent of sampling rate", test_wake_is_independent_of_sampling_rate, True),
     ("wake: opens near the Kelvin angle", test_wake_opens_near_the_kelvin_angle, True),
+    ("damping: lower ahead than abeam", test_drag_is_lower_ahead_than_abeam, True),
+    ("damping: scalar Cd still works", test_drag_still_accepts_a_scalar, True),
 ]
 
 
