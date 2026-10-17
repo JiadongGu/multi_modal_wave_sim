@@ -60,6 +60,10 @@ class WakeField(WaveField):
         decay_length: float = 40.0,
         lifetime: float = 12.0,
         speed_ref: float = 3.0,
+        core: float = 2.0,
+        highlight: bool = True,
+        highlight_scale: float = None,
+        exaggerate: float = 1.0,
         min_spacing: float = 0.75,
         min_interval: float = 0.08,
         max_samples: int = 48,
@@ -103,10 +107,33 @@ class WakeField(WaveField):
         # rather than a pattern that exists everywhere the instant it is shed.
         self.group_speed = 0.5 * np.sqrt(GRAVITY / self.k)
 
+        # A point source has a singular near field: at d = 0 every ring that
+        # has been shed is in phase and they add coherently, which produced
+        # 0.55 m of wake from an amplitude of 0.12. The hull would then float
+        # on a half-metre hump of its own making - height() feeds the force
+        # model, so the wake is not only drawn, it is felt. Giving the source
+        # a finite size removes the singularity: the effective distance is
+        # hypot(d, core), so nothing ever sees d = 0. Roughly the beam of the
+        # vessel is the right scale, since that is the size of the thing
+        # actually pushing the water.
+        self.core = float(core)
         self.decay_length = float(decay_length)   # [m]  spatial damping
         self.lifetime = float(lifetime)           # [s]  temporal damping
         self.speed_ref = float(speed_ref)         # [m/s] full-amplitude speed
 
+        # A wake a few centimetres high on a 5 m boat is invisible against a
+        # half-metre sea, so the water is tinted where the wake is. This is
+        # the honest way round: the SHAPE stays physical and only the COLOUR
+        # is amplified, so nothing the hull feels is changed by making it
+        # easier to look at.
+        self.highlight = bool(highlight)
+        self.highlight_scale = (float(highlight_scale)
+                                if highlight_scale else max(self.amplitude, 1e-6))
+        # If the shape itself needs exaggerating, that is a separate dial and
+        # it is NOT free - it scales the rendered surface only, so what you
+        # see stops matching what the hull floats on. 1.0 is honest.
+        self.exaggerate = float(exaggerate)
+        self._mesh_wake = None
         self.min_spacing = float(min_spacing)
         self.min_interval = float(min_interval)
         self.max_samples = int(max_samples)
@@ -211,9 +238,29 @@ class WakeField(WaveField):
         if px.size == 0:
             return np.zeros(x.shape)
 
+        # Cull before the expensive part. Cost here is points x rings, and on
+        # a 128x128 grid with 40 rings that is 650k distance evaluations for a
+        # wake that covers a few percent of the tile - the rest is zeroed by
+        # the causality gate after being computed in full. A bounding box
+        # around the track, grown by the furthest any ring can have travelled,
+        # throws most of it away and is exact: nothing outside that box can
+        # have been reached yet.
+        reach = float(np.max(self.group_speed * (self.time - pt)))
+        near = ((x >= px.min() - reach) & (x <= px.max() + reach)
+                & (y >= py.min() - reach) & (y <= py.max() + reach))
+        if not near.all():
+            out = np.zeros(x.shape)
+            if near.any():
+                out[near] = self.wake_height(x[near], y[near])
+            return out
+
         # (..., n) - every query point against every shed ring.
         d = np.hypot(x[..., None] - px, y[..., None] - py)
         age = self.time - pt
+        # Softened distance for the wave itself. Causality below still uses
+        # the true d - the front travels at the group velocity from where the
+        # ring was actually shed, not from the edge of a fictitious core.
+        d_soft = np.hypot(d, self.core)
 
         # Causality: the ring's energy has only reached radius c_g * age.
         # Without this the whole pattern springs into existence at once, which
@@ -224,9 +271,9 @@ class WakeField(WaveField):
         # This is the piece to replace when moving past a single wavenumber -
         # everything else here is bookkeeping.
         eta = (pa
-               * np.exp(-d / self.decay_length)
+               * np.exp(-d_soft / self.decay_length)
                * np.exp(-age / self.lifetime)
-               * np.sin(self.k * d - self.omega * age))
+               * np.sin(self.k * d_soft - self.omega * age))
         return np.sum(np.where(arrived, eta, 0.0), axis=-1)
 
     def height(self, x, y):
@@ -243,14 +290,40 @@ class WakeField(WaveField):
         ended up rather than where they started.
         """
         pts = self.base.mesh_points()
-        pts[:, 2] += self.wake_height(pts[:, 0], pts[:, 1])
+        # Kept for vertex_colors, which runs straight after this and would
+        # otherwise have to recompute the whole thing.
+        self._mesh_wake = self.wake_height(pts[:, 0], pts[:, 1])
+        pts[:, 2] += self._mesh_wake * self.exaggerate
         return pts
 
     def mesh_topology(self):
         return self.base.mesh_topology()
 
     def vertex_colors(self):
-        return self.base.vertex_colors()
+        """The base's colours, brightened where the wake is.
+
+        Without this the wake is physically present and visually invisible:
+        a few centimetres of it does not read against a half-metre sea, and
+        on a 5 m boat that is the normal case. Tinting is preferable to
+        exaggerating the geometry, because the surface the hull floats on
+        stays the surface you are looking at.
+        """
+        base = self.base.vertex_colors()
+        if not self.highlight or self._mesh_wake is None:
+            return base
+        if base is None:
+            deep = np.array([[0.015, 0.055, 0.075]])
+            base = np.repeat(deep, self._mesh_wake.size, axis=0)
+        else:
+            base = np.asarray(base, dtype=float)
+        # Signed, so crests and troughs of the wake read differently - a wake
+        # is a wave train, and colouring |eta| would show it as a series of
+        # bars at twice the real frequency.
+        w = np.clip(self._mesh_wake[:, None] / self.highlight_scale, -1.0, 1.0)
+        crest = np.array([[0.30, 0.85, 0.95]])     # pale cyan
+        trough = np.array([[0.02, 0.10, 0.28]])    # deep blue
+        tint = np.where(w > 0.0, crest, trough)
+        return base * (1.0 - np.abs(w)) + tint * np.abs(w)
 
     def __repr__(self) -> str:
         return (f"WakeField(base={self.base_name!r}, "

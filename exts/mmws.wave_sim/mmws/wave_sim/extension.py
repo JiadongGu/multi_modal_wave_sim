@@ -401,6 +401,54 @@ class MultiModalWaveSimExtension(_ExtBase):
             finally:
                 self._in_select = False
 
+    # -------------------------------------------------------------------- wake
+
+    # Keys that describe the DOMAIN rather than the field's own behaviour.
+    # They belong to whatever field is in front; everything else belongs to
+    # the base field being wrapped.
+    _DOMAIN_KEYS = ("tile_size", "resolution")
+
+    def show_wake(self, enable: bool = True, **wake_kwargs) -> None:
+        """Wrap (or unwrap) the current field in a WakeField.
+
+            E.get().show_wake(True)
+
+        The wake renders through the water surface itself, because
+        WakeField.height is base + wake - so turning it on is a field swap,
+        not a second thing to draw. Wrapping rather than replacing is what
+        makes this reversible: the sea underneath keeps its spectrum, its
+        seed and its choppiness, and unchecking the box puts it back exactly
+        as it was.
+        """
+        if self.field is None:
+            return
+        current = self._field_name
+        domain = {k: v for k, v in self._field_kwargs.items()
+                  if k in self._DOMAIN_KEYS}
+
+        if enable:
+            if current == "wake":
+                if wake_kwargs:                      # already on, just retune
+                    self.select(field="wake",
+                                field_kwargs={**self._field_kwargs, **wake_kwargs})
+                return
+            base_kwargs = {k: v for k, v in self._field_kwargs.items()
+                           if k not in self._DOMAIN_KEYS}
+            self.select(field="wake", field_kwargs={
+                **domain, "base": current, "base_kwargs": base_kwargs,
+                **wake_kwargs})
+            return
+
+        if current != "wake":
+            return
+        base = getattr(self.field, "base_name", "fft")
+        base_kwargs = dict(self._field_kwargs.get("base_kwargs") or {})
+        self.select(field=base, field_kwargs={**domain, **base_kwargs})
+
+    @property
+    def wake_on(self) -> bool:
+        return self._field_name == "wake"
+
     # ------------------------------------------------------------------- drive
 
     def keyboard_drive(self, enable: bool = True, keys: str = None) -> None:

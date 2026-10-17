@@ -197,6 +197,19 @@ class SpectrumPanel:
                 ui.Label("record run to .npz", style={"color": 0xFFAAAAAA})
 
             with ui.HStack(height=24, spacing=6):
+                ui.Label("wake", width=70,
+                         tooltip="the wake the hull leaves behind it, shed as "
+                                 "damped rings along its track and summed - "
+                                 "so the Kelvin wedge is a result, not a "
+                                 "drawing. Rides on top of whatever sea is "
+                                 "already there; unticking puts that sea back "
+                                 "exactly as it was")
+                self._wake = ui.CheckBox(width=20)
+                self._wake.model.add_value_changed_fn(
+                    lambda m: self._ext.show_wake(bool(m.get_value_as_bool())))
+                ui.Label("hull wake", style={"color": 0xFFAAAAAA})
+
+            with ui.HStack(height=24, spacing=6):
                 ui.Label("drive", width=70,
                          tooltip="I/K ahead and astern, J/L turn. Two screws "
                                  "at a known point below the centre of "
@@ -313,6 +326,7 @@ class SpectrumPanel:
         self._grid.model.set_value(bool(getattr(self._ext, "show_grid", False)))
         self._follow.model.set_value(bool(getattr(self._ext, "follow", False)))
         self._arrows.model.set_value(bool(getattr(self._ext, "show_forces", False)))
+        self._wake.model.set_value(bool(getattr(self._ext, "wake_on", False)))
         self._drive.model.set_value(getattr(self._ext, "_kb_sub", None) is not None)
         self._capture.model.set_value(getattr(self._ext, "_cap", None) is not None)
         self._report()

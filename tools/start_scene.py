@@ -42,8 +42,15 @@ if ext.vessel is None:
 kwargs = {"tile_size": 256.0, "resolution": 64}
 if FIELD == "wake":
     # Wake on top of the spectral sea, not instead of it.
-    kwargs = {"tile_size": 256.0, "resolution": 64, "base": "fft",
-              "amplitude": 0.15, "wavelength": 6.0}
+    #
+    # And a finer grid, because the default cannot represent a wake at all:
+    # a 256 m tile at 64 is 4 m cells against a 6 m wake wavelength, which is
+    # below Nyquist. 128 m at 128 gives 1 m cells, six per wave. That used to
+    # be unaffordable - points x rings - until wake_height started culling
+    # everything outside the track's reach, which cut it 10x.
+    kwargs = {"tile_size": 128.0, "resolution": 128, "base": "fft",
+              "amplitude": 0.15, "wavelength": 6.0,
+              "exaggerate": float(os.environ.get("MMWS_WAKE_EXAGGERATE", 1.0))}
 ext.select(spectrum="jonswap",
            spectrum_kwargs={"hs": HS, "tp": TP, "spread_s": 5.0},
            field=FIELD, field_kwargs=kwargs)
