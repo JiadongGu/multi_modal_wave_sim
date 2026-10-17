@@ -48,6 +48,14 @@ from .base import WaveField, deep_water_omega
 class WakeField(WaveField):
     """A base field, plus damped rings shed along a hull's track."""
 
+    # Deliberately not sea colours. Pale cyan on blue water was too close to
+    # the water to pick out a few centimetres of wake, which was the whole
+    # problem. Warm crest against cool trough reads at a glance and cannot be
+    # mistaken for the sea itself - this is an overlay, and it should look
+    # like one.
+    CREST_COLOUR = (1.00, 0.55, 0.10)      # orange
+    TROUGH_COLOUR = (0.10, 0.80, 0.45)     # green
+
     def __init__(
         self,
         spectrum=None,
@@ -320,8 +328,8 @@ class WakeField(WaveField):
         # is a wave train, and colouring |eta| would show it as a series of
         # bars at twice the real frequency.
         w = np.clip(self._mesh_wake[:, None] / self.highlight_scale, -1.0, 1.0)
-        crest = np.array([[0.30, 0.85, 0.95]])     # pale cyan
-        trough = np.array([[0.02, 0.10, 0.28]])    # deep blue
+        crest = np.array([self.CREST_COLOUR])
+        trough = np.array([self.TROUGH_COLOUR])
         tint = np.where(w > 0.0, crest, trough)
         return base * (1.0 - np.abs(w)) + tint * np.abs(w)
 

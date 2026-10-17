@@ -161,6 +161,19 @@ class SpectrumPanel:
                 opac.model.add_end_edit_fn(lambda m: self._set_opacity())
 
             with ui.HStack(height=24, spacing=6):
+                ui.Label("colour", width=70,
+                         tooltip="paint the wake onto the water - orange on "
+                                 "its crests, green in its troughs. Signed, "
+                                 "so a wave train reads as a wave train "
+                                 "rather than as bars at twice the "
+                                 "frequency. Colour only: the surface stays "
+                                 "exactly the surface the hull floats on")
+                self._wake_tint = ui.CheckBox(width=20)
+                self._wake_tint.model.add_value_changed_fn(
+                    lambda m: self._set_wake_tint(bool(m.get_value_as_bool())))
+                ui.Label("colour the wake", style={"color": 0xFFAAAAAA})
+
+            with ui.HStack(height=24, spacing=6):
                 ui.Label("wake x", width=70,
                          tooltip="scale the wake's drawn HEIGHT. 1 is honest - "
                                  "what you see is what the hull floats on. "
@@ -264,6 +277,11 @@ class SpectrumPanel:
 
     # ------------------------------------------------------------------- state
 
+    def _set_wake_tint(self, on: bool) -> None:
+        field = getattr(self._ext, "field", None)
+        if field is not None and hasattr(field, "highlight"):
+            field.highlight = bool(on)
+
     def _set_exaggerate(self) -> None:
         """Visual gain on the wake. Does not touch what the force model sees.
 
@@ -357,6 +375,7 @@ class SpectrumPanel:
         self._follow.model.set_value(bool(getattr(self._ext, "follow", False)))
         self._arrows.model.set_value(bool(getattr(self._ext, "show_forces", False)))
         self._wake.model.set_value(bool(getattr(self._ext, "wake_on", False)))
+        self._wake_tint.model.set_value(bool(getattr(field, "highlight", False)))
         exag = float(getattr(field, "exaggerate", 1.0))
         self._exaggerate.model.set_value(exag)
         self._exaggerate_label.text = f"{exag:.2f}"
