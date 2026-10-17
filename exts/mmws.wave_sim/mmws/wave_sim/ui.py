@@ -161,6 +161,24 @@ class SpectrumPanel:
                 opac.model.add_end_edit_fn(lambda m: self._set_opacity())
 
             with ui.HStack(height=24, spacing=6):
+                ui.Label("wake x", width=70,
+                         tooltip="scale the wake's drawn HEIGHT. 1 is honest - "
+                                 "what you see is what the hull floats on. "
+                                 "Above that the picture and the physics "
+                                 "disagree on purpose, which is useful for "
+                                 "seeing a few centimetres of wake on a 5 m "
+                                 "boat and useless for measuring anything")
+                exag = ui.FloatSlider(min=1.0, max=10.0)
+                exag.model.set_value(1.0)
+                self._exaggerate = exag
+                self._exaggerate_label = ui.Label("1.00", width=74,
+                                                  style={"color": 0xFFAAAAAA})
+                exag.model.add_value_changed_fn(
+                    lambda m: setattr(self._exaggerate_label, "text",
+                                      f"{m.get_value_as_float():.2f}"))
+                exag.model.add_end_edit_fn(lambda m: self._set_exaggerate())
+
+            with ui.HStack(height=24, spacing=6):
                 ui.Label("grid", width=70,
                          tooltip="draw the FFT grid lines on the surface - "
                                  "shows the resolution you are working at, "
@@ -246,6 +264,18 @@ class SpectrumPanel:
 
     # ------------------------------------------------------------------- state
 
+    def _set_exaggerate(self) -> None:
+        """Visual gain on the wake. Does not touch what the force model sees.
+
+        The wake field adds `exaggerate` to the drawn surface only -
+        height(), which the hull is integrated against, is untouched. So this
+        makes the wake findable without quietly changing the experiment.
+        """
+        field = getattr(self._ext, "field", None)
+        if field is None or not hasattr(field, "exaggerate"):
+            return
+        field.exaggerate = float(self._exaggerate.model.get_value_as_float())
+
     def _set_opacity(self) -> None:
         """Write opacity onto the water material make_scene.py built.
 
@@ -327,6 +357,9 @@ class SpectrumPanel:
         self._follow.model.set_value(bool(getattr(self._ext, "follow", False)))
         self._arrows.model.set_value(bool(getattr(self._ext, "show_forces", False)))
         self._wake.model.set_value(bool(getattr(self._ext, "wake_on", False)))
+        exag = float(getattr(field, "exaggerate", 1.0))
+        self._exaggerate.model.set_value(exag)
+        self._exaggerate_label.text = f"{exag:.2f}"
         self._drive.model.set_value(getattr(self._ext, "_kb_sub", None) is not None)
         self._capture.model.set_value(getattr(self._ext, "_cap", None) is not None)
         self._report()
