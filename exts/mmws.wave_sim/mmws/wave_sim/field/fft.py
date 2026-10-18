@@ -18,7 +18,8 @@ class FftWaveField(WaveField):
     def __init__(self,spectrum=None, tile_size:float = 256.0,
                  resolution: int = 128, seed: int = 0,
                  choppiness: float = 1.0, foam_threshold: float = 0.35,
-                 foam_decay: float = 1.0,
+                 foam_decay: float = 0.8,
+                 foam_accel: float = 0.35,
                  k_min: float = None, k_max: float = None,
                  **kwargs) -> None:
         #resolution is grid points per side* NxN height samples
@@ -67,6 +68,25 @@ class FftWaveField(WaveField):
         # foam is entrained air, and air takes time to surface, so a wave
         # leaves a patch behind it that fades. Without this, cresting looks
         # like static rather than like breaking.
+        # A wave breaks when the downward acceleration at its crest reaches
+        # a fraction of gravity - the classical limiting condition, and the
+        # reason a crest cannot get sharper than about 120 degrees. This is
+        # what whitecaps are, and it is what the old foam model was missing:
+        # that one keyed off the Jacobian of the horizontal displacement, so
+        # it fired on a numerical FOLD rather than on breaking, and coverage
+        # was set by `choppiness` - an artistic parameter - while being
+        # almost blind to the sea state. Measured at choppiness 1.0, it gave
+        # 0.0% coverage for every sea from Hs 1 to Hs 8, where Monahan's fit
+        # gives 0.3% to 9.3%.
+        #
+        # 0.35 with a 0.8 s decay fits Monahan within about a factor of two
+        # from Hs 1 to 8 - 3.55% against 2.86% at Hs 4 - and, the part that
+        # matters, it rises with the sea instead of with a slider. The
+        # threshold and the decay have to be calibrated together: foam
+        # lingers, so steady-state coverage is several times the
+        # instantaneous breaking fraction, and Monahan's W is a steady-state
+        # measurement.
+        self.foam_accel = float(foam_accel)
         self.foam_decay = float(foam_decay)
         self._dx = self._dy = self._foam = None
         self._foam_accum = None
@@ -147,11 +167,26 @@ class FftWaveField(WaveField):
         dt = 0.0 if self._last_t is None else max(self.time - self._last_t, 0.0)
         self._last_t = self.time
 
-        if self.choppiness <= 0.0:
-            self._dx = self._dy = self._foam = self._foam_accum = None
-            return
-
         N2 = self.resolution ** 2
+
+        # Breaking foam, which does not need the horizontal displacement and
+        # so is computed whether or not choppiness is on. d2(eta)/dt2 comes
+        # straight out of the same spectral amplitudes: each component
+        # oscillates at its own omega, so differentiating twice in time is a
+        # factor of -omega^2.
+        born = None
+        if self.foam_accel > 0.0:
+            acc = np.fft.ifft2(-(self._omega ** 2) * h).real * N2
+            down = -acc / GRAVITY           # positive where the surface falls
+            born = np.clip((down - self.foam_accel) / self.foam_accel, 0.0, 1.0)
+
+        if self.choppiness <= 0.0:
+            self._dx = self._dy = None
+            if born is None:
+                self._foam = self._foam_accum = None
+                return
+            self._accumulate_foam(born, dt)
+            return
         # D = ifft(-i k_hat h). Multiplying by -i k_hat keeps the Hermitian
         # symmetry that makes eta real, so these come back real too.
         self._dx = np.fft.ifft2(-1j * self._kx_hat * h).real * N2
@@ -166,13 +201,22 @@ class FftWaveField(WaveField):
         jacobian = (1.0 + lam * jxx) * (1.0 + lam * jyy) - (lam * jxy) ** 2
         # 1 is undisturbed, 0 is a fold. Map the span below the threshold onto
         # 0..1 so there is a gradient to shade with rather than a hard mask.
-        born = np.clip(
+        # Folding foam, kept as well: past choppiness ~1.5 the surface really
+        # does pass through itself, and that is also white water. Whichever
+        # of the two is brighter wins - they are different mechanisms, not
+        # terms to be added.
+        fold = np.clip(
             (self.foam_threshold - jacobian) / max(self.foam_threshold, 1e-6),
             0.0, 1.0)
+        born = fold if born is None else np.maximum(born, fold)
 
         # Take the brighter of "breaking now" and "was breaking recently".
         # Maximum rather than a sum, so foam saturates at 1 instead of
         # accumulating into a solid white sea wherever waves keep passing.
+        self._accumulate_foam(born, dt)
+
+    def _accumulate_foam(self, born, dt: float) -> None:
+        """Foam lingers after the crest has gone, then fades."""
         if self._foam_accum is None or self._foam_accum.shape != born.shape:
             self._foam_accum = born
         elif self.foam_decay > 0.0 and dt > 0.0:

@@ -1035,21 +1035,48 @@ def test_yaw_damping_uses_the_side_not_the_plan():
 
 
 def test_foam_coverage_is_physical():
-    """Whitecaps cover a few percent of a rough sea, not a third of it.
+    """Whitecap coverage must rise with the sea and land near Monahan.
 
-    Monahan's fit gives about 1% at 10 m/s of wind and 4% at 15 m/s. The old
-    defaults (threshold 0.55, decay 2.5 s) reached 35% on a steep sea and 99%
-    at choppiness 2.3, because foam accumulated faster than it decayed - tau
-    was long against the wave period, and np.maximum keeps a cell white until
-    it has faded.
+    The old model keyed off the Jacobian of the horizontal displacement, so
+    it fired on a numerical fold rather than on breaking: coverage was set by
+    `choppiness`, an artistic parameter, and measured 0.0% for every sea from
+    Hs 1 to Hs 8, where Monahan's fit gives 0.3% to 9.3%. It now uses the
+    classical breaking condition - downward acceleration at the crest
+    reaching a fraction of g.
     """
-    spec = SPECTRA.create("jonswap", hs=2.26, tp=4.0, spread_s=5.0)
-    f = FIELDS.create("fft", spectrum=spec, tile_size=128.0, resolution=128,
-                      seed=1, choppiness=1.0)
-    for i in range(1200):                       # 20 s, long enough to settle
-        f.advance(i / 60.0)
-    cover = float((f._foam > 0.05).mean()) * 100.0
-    assert 0.2 < cover < 8.0, f"foam covers {cover:.1f}% of a steep sea"
+    def coverage(hs, tp, chop=0.0):
+        spec = SPECTRA.create("jonswap", hs=hs, tp=tp, spread_s=5.0)
+        f = FIELDS.create("fft", spectrum=spec, tile_size=256.0,
+                          resolution=128, seed=1, choppiness=chop)
+        for i in range(600):
+            f.advance(i / 60.0)
+        return 0.0 if f._foam is None else float((f._foam > 0.05).mean()) * 100.0
+
+    calm, rough = coverage(1.0, 5.0), coverage(5.5, 9.0)
+    assert rough > calm, f"coverage did not rise with the sea: {calm} -> {rough}"
+    # Monahan gives about 4.9% at the wind implied by Hs 5.5. Within a factor
+    # of three is as much as one realisation can honestly claim.
+    assert 1.5 < rough < 15.0, f"Hs 5.5 gave {rough:.1f}% whitecap coverage"
+    assert calm < 2.0, f"a 1 m sea gave {calm:.1f}% whitecap coverage"
+
+
+def test_foam_does_not_depend_on_choppiness():
+    """Breaking is a property of the wave, not of how sharply it is drawn.
+
+    Choppiness is horizontal displacement - what the crests look like.
+    Whether a wave breaks is set by its own acceleration.
+    """
+    def coverage(chop):
+        spec = SPECTRA.create("jonswap", hs=4.0, tp=8.0, spread_s=5.0)
+        f = FIELDS.create("fft", spectrum=spec, tile_size=256.0,
+                          resolution=128, seed=1, choppiness=chop)
+        for i in range(600):
+            f.advance(i / 60.0)
+        return 0.0 if f._foam is None else float((f._foam > 0.05).mean()) * 100.0
+
+    flat, choppy = coverage(0.0), coverage(1.0)
+    assert abs(flat - choppy) < 0.5 * max(flat, 1.0), \
+        f"choppiness changed whitecap coverage: {flat:.2f}% -> {choppy:.2f}%"
 
 
 TESTS = [
@@ -1141,6 +1168,7 @@ TESTS = [
     ("thruster: runs straight with no helm", test_thruster_runs_straight_with_no_helm, True),
     ("thruster: pivots with no way on", test_thruster_pivots_with_no_way_on, True),
     ("foam: coverage is physical", test_foam_coverage_is_physical, True),
+    ("foam: independent of choppiness", test_foam_does_not_depend_on_choppiness, True),
 ]
 
 
