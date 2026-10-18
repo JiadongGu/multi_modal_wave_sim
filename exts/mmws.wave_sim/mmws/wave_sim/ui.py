@@ -432,6 +432,15 @@ class SpectrumPanel:
                     f" - at Tp {tp:.1f} s the limit is Hs {hs_max:.1f} m")
         elif steep > 0.100:
             note = f"\nsteepness {steep:.3f} - a very steep, storm sea"
+        # Statistical, not structural: the tile holds the wave, but too few
+        # of them to pin Hs down. Measured over 5 seeds at Hs 1.5 / Tp 6:
+        # 2.3 waves per tile scatters 12%, 4.6 scatters 5%, 9 scatters 3%.
+        # Worth saying, because an RAO measured against a nominal Hs inherits
+        # that scatter as an error term.
+        waves = field.tile_size / max(wavelength, 1e-6)
+        if 1.0 < waves < 4.0:
+            note += (f"\nonly {waves:.1f} waves per tile - Hs will scatter "
+                     f"~{12.0 * 2.3 / waves:.0f}% between seeds")
         if wavelength > field.tile_size:
             note += (f"\npeak wavelength {wavelength:.0f} m is longer than the "
                     f"{field.tile_size:.0f} m tile - it will not fit")
