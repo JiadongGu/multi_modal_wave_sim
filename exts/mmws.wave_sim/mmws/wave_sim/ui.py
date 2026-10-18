@@ -411,6 +411,15 @@ class SpectrumPanel:
         if field is None:
             self._readout.text = "no field"
             return
+        # A field that does not consult a spectrum makes every slider above
+        # inert, and silently: the field rebuilds, the log says so, and the
+        # water does not move. Say it rather than let it look broken.
+        if getattr(field, "spectrum", None) is None or field.name == "flat":
+            self._readout.text = (
+                f"field is {field.name!r} - the spectrum sliders do nothing.\n"
+                "flat water is the control case: a hull on it must settle and\n"
+                "stay settled. Switch to fft or wake for a moving sea.")
+            return
         tp = self._sliders["tp"].model.get_value_as_float()
         wavelength = 9.80665 * tp * tp / (2.0 * pi)
         try:

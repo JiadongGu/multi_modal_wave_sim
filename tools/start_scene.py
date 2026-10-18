@@ -40,7 +40,9 @@ ext.activate(True)
 if ext.vessel is None:
     ext.bind_vessel()
 
-kwargs = {"tile_size": 256.0, "resolution": 64}
+# 1 m cells, not 4. A 256 m tile at resolution 64 cannot show a wave
+# shorter than 8 m, which is most of what a sea looks like.
+kwargs = {"tile_size": 256.0, "resolution": 256}
 if FIELD == "wake":
     # Wake on top of the spectral sea, not instead of it.
     #
