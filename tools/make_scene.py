@@ -40,6 +40,7 @@ from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade
 # a temp directory. The package is already importable (the extension is
 # enabled), and its location is the one thing that is always right.
 import mmws.wave_sim as _pkg
+import mmws.wave_sim as _pkg_mod
 from pathlib import Path as _P
 
 # Generated files go to <repo>/out (or $MMWS_OUT), never to a bare /tmp
@@ -174,8 +175,40 @@ def _sky(width, sun_elev_deg, sun_az_deg, brightness=1.0, turbidity=0.35,
     return (np.clip(col, 0, 1) ** (1 / 2.2) * 255).astype(np.uint8), sun
 
 
+def _wave_normals(size=512, tile=4.0, hs=0.06, tp=1.3, seed=11):
+    """Bake a tiling normal map of centimetre-scale ripple.
+
+    This is the piece that makes water look like water, and it is a texture
+    rather than geometry for the same reason asv_wave_sim does it that way:
+    the detail wanted is a few centimetres across, the mesh is metres across,
+    and normals are sampled per PIXEL while vertices are not. Their shader
+    tiles a 4 m normal map 64 times over a 256 m mesh; this is the same idea
+    with the texture generated instead of shipped.
+
+    An FFT tile is periodic by construction, so a map baked from one tiles
+    seamlessly - no edge blending, no visible seam. Which is a good reason to
+    bake it from the same wave machinery rather than from generic noise.
+    """
+    import sys as _sys
+    _pkg = str(_P(_pkg_mod.__file__).resolve().parents[2])
+    if _pkg not in _sys.path:
+        _sys.path.insert(0, _pkg)
+    from mmws.wave_sim import FIELDS, SPECTRA
+
+    spec = SPECTRA.create("jonswap", hs=hs, tp=tp, spread_s=3.0)
+    f = FIELDS.create("fft", spectrum=spec, tile_size=float(tile),
+                      resolution=int(size), seed=int(seed), choppiness=0.0)
+    f.advance(0.0)
+    z = np.asarray(f._z, dtype=np.float64)
+    dzdx, dzdy = np.gradient(z, f.cell_size)
+    n = np.stack([-dzdx, -dzdy, np.ones_like(z)], axis=-1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    # Tangent-space encoding: [-1,1] -> [0,1]. Flat water is (0.5, 0.5, 1).
+    return np.clip((n * 0.5 + 0.5) * 255.0, 0, 255).astype(np.uint8)
+
+
 def _surface(stage, path, diffuse, roughness, metallic=0.0, opacity=1.0,
-             read_display_color=False):
+             read_display_color=False, normal_map=None, bump_scale=64.0):
     """A UsdPreviewSurface material. Renders in RTX without MDL or Nucleus."""
     material = UsdShade.Material.Define(stage, path)
     shader = UsdShade.Shader.Define(stage, f"{path}/Shader")
@@ -214,6 +247,43 @@ def _surface(stage, path, diffuse, roughness, metallic=0.0, opacity=1.0,
     shader.CreateInput("ior", Sdf.ValueTypeNames.Float).Set(1.33)
     shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(float(metallic))
     shader.CreateInput("opacity", Sdf.ValueTypeNames.Float).Set(float(opacity))
+    if normal_map:
+        # The ripple, per pixel. asv_wave_sim tiles a 4 m normal map 64 times
+        # across a 256 m mesh and samples it per fragment; this is the same
+        # arrangement. The mesh carries waves down to about 2 m and the
+        # texture carries everything below that, which is where the glitter
+        # and most of the "looks like water" lives.
+        reader_st = UsdShade.Shader.Define(stage, f"{path}/StReader")
+        reader_st.CreateIdAttr("UsdPrimvarReader_float2")
+        reader_st.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("st")
+        reader_st.CreateOutput("result", Sdf.ValueTypeNames.Float2)
+
+        xform = UsdShade.Shader.Define(stage, f"{path}/StScale")
+        xform.CreateIdAttr("UsdTransform2d")
+        xform.CreateInput("in", Sdf.ValueTypeNames.Float2).ConnectToSource(
+            reader_st.ConnectableAPI(), "result")
+        xform.CreateInput("scale", Sdf.ValueTypeNames.Float2).Set(
+            Gf.Vec2f(float(bump_scale), float(bump_scale)))
+        xform.CreateOutput("result", Sdf.ValueTypeNames.Float2)
+
+        tex = UsdShade.Shader.Define(stage, f"{path}/NormalMap")
+        tex.CreateIdAttr("UsdUVTexture")
+        tex.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(normal_map))
+        tex.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(
+            xform.ConnectableAPI(), "result")
+        tex.CreateInput("wrapS", Sdf.ValueTypeNames.Token).Set("repeat")
+        tex.CreateInput("wrapT", Sdf.ValueTypeNames.Token).Set("repeat")
+        # A normal map stores [-1,1] packed into [0,1], so it has to be
+        # unpacked. Without the scale and bias the surface is tilted bodily
+        # toward +x+y instead of being perturbed about its own normal.
+        tex.CreateInput("scale", Sdf.ValueTypeNames.Float4).Set(
+            Gf.Vec4f(2.0, 2.0, 2.0, 1.0))
+        tex.CreateInput("bias", Sdf.ValueTypeNames.Float4).Set(
+            Gf.Vec4f(-1.0, -1.0, -1.0, 0.0))
+        tex.CreateOutput("rgb", Sdf.ValueTypeNames.Float3)
+        shader.CreateInput("normal", Sdf.ValueTypeNames.Normal3f).ConnectToSource(
+            tex.ConnectableAPI(), "rgb")
+
     material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
     return material
 
@@ -263,9 +333,14 @@ xf.AddOrientOp().Set(Gf.Quatf(Gf.Quatd(rot.GetQuat())))
 print(f"  sun          /World/Sun   elevation {SUN_ELEV:.0f} deg, heading {SUN_AZ:.0f} deg")
 
 # --- materials --------------------------------------------------------------
+NORMAL_PNG = globals().get("NORMAL_PNG", output("wave_normals.png"))
+BUMP_SCALE = float(globals().get("BUMP_SCALE", 64.0))
+_write_png(NORMAL_PNG, _wave_normals())
+print(f"  wrote {NORMAL_PNG}  (tiling ripple normal map)")
 water_mat = _surface(stage, "/World/Looks/Water",
-                     diffuse=(0.015, 0.055, 0.075), roughness=0.06, metallic=0.0,
-                     read_display_color=True)
+                     diffuse=(0.0, 0.05, 0.12), roughness=0.06, metallic=0.0,
+                     read_display_color=True, normal_map=NORMAL_PNG,
+                     bump_scale=BUMP_SCALE)
 # Define the mesh if it is not there yet, rather than giving up on binding.
 # This script runs before the extension has stepped, so /World/Water does not
 # exist, and the old message said "press Play once, then re-run" - which

@@ -19,6 +19,7 @@ class FftWaveField(WaveField):
                  resolution: int = 128, seed: int = 0,
                  choppiness: float = 1.0, foam_threshold: float = 0.35,
                  foam_decay: float = 1.0,
+                 k_min: float = None, k_max: float = None,
                  **kwargs) -> None:
         #resolution is grid points per side* NxN height samples
         super().__init__(spectrum=spectrum,tile_size=tile_size,resolution=resolution)
@@ -27,6 +28,12 @@ class FftWaveField(WaveField):
             raise ValueError("FftWaveField needs a spectrum to draw amplitudes from")
 
         self.seed = int(seed)
+        # Wavenumber band this tile is responsible for. A cascade gives each
+        # tile its own slice so they do not all contain the peak and sum to
+        # three times the energy; left as None a tile carries everything it
+        # can represent, which is the single-tile behaviour.
+        self.k_min = None if k_min is None else float(k_min)
+        self.k_max = None if k_max is None else float(k_max)
         # Choppiness: how far each point is dragged HORIZONTALLY, on top of
         # being lifted vertically. A pure height field gives sinusoids, which
         # a real sea is not - real waves have sharp crests and broad flat
@@ -104,6 +111,15 @@ class FftWaveField(WaveField):
         #D is the cos-2s spreading weight (how much of that frequency's energy travels this direction)
 
         var = np.where(k > 0.0, S * dwdk *D / k_safe *dk * dk, 0.0)
+
+        # Band limit. Zeroing the variance (not the amplitude) is what keeps
+        # the partition exact: variance is additive across independent
+        # components, so the bands of a cascade sum back to the spectrum they
+        # were cut from, and Hs comes out right.
+        if self.k_min is not None:
+            var = np.where(k >= self.k_min, var, 0.0)
+        if self.k_max is not None:
+            var = np.where(k <= self.k_max, var, 0.0)
 
         rng = np.random.default_rng(self.seed)
 

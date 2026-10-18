@@ -245,6 +245,24 @@ class WaveField(ABC):
 
         mesh.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(pts))
 
+        # Texture coordinates, authored once. A normal map carries the
+        # centimetre-scale ripple that the mesh is far too coarse to hold,
+        # and it is sampled per PIXEL rather than per vertex - which is the
+        # whole reason it works. Without st the material has nothing to look
+        # the texture up with.
+        pvapi = UsdGeom.PrimvarsAPI(mesh)
+        st = pvapi.GetPrimvar("st")
+        if not st or not st.HasAuthoredValue() or len(st.Get() or []) != len(pts):
+            n_side = self.resolution
+            g = np.arange(n_side, dtype=np.float32) / float(n_side)
+            uu, vv = np.meshgrid(g, g, indexing="ij")
+            if not st:
+                st = pvapi.CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray,
+                                         UsdGeom.Tokens.vertex)
+            st.SetInterpolation(UsdGeom.Tokens.vertex)
+            st.Set(Vt.Vec2fArray.FromNumpy(
+                np.stack([uu.ravel(), vv.ravel()], axis=-1).astype(np.float32)))
+
         # Per-vertex normals. Without them the renderer uses FACE normals and
         # shades every triangle flat, so a 1 m grid under a 1.5 m sea renders
         # as a field of visible facets - the single worst thing about how this
