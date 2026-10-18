@@ -245,6 +245,29 @@ class WaveField(ABC):
 
         mesh.GetPointsAttr().Set(Vt.Vec3fArray.FromNumpy(pts))
 
+        # Per-vertex normals. Without them the renderer uses FACE normals and
+        # shades every triangle flat, so a 1 m grid under a 1.5 m sea renders
+        # as a field of visible facets - the single worst thing about how this
+        # looks, and nothing to do with the wave model. subdivisionScheme is
+        # "none" (deliberately: the surface is computed, not a cage to smooth),
+        # which means nothing else is going to supply them.
+        #
+        # Taken from the height grid rather than from the triangles: the
+        # surface is known analytically, so its slope is too, and a gradient
+        # of the grid is both cheaper and smoother than averaging face
+        # normals. With choppiness on, the points have also moved sideways
+        # and this becomes an approximation - a good one, because the
+        # displacement is smooth at the scale of a cell.
+        N = self.resolution
+        if len(pts) == N * N:
+            z = pts[:, 2].reshape(N, N).astype(np.float64)
+            dzdx, dzdy = np.gradient(z, self.cell_size)
+            nrm = np.stack([-dzdx, -dzdy, np.ones_like(z)], axis=-1).reshape(-1, 3)
+            nrm /= np.linalg.norm(nrm, axis=-1, keepdims=True)
+            mesh.CreateNormalsAttr().Set(
+                Vt.Vec3fArray.FromNumpy(nrm.astype(np.float32)))
+            mesh.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
+
         overlay = self.overlay_colors()
         if overlay is not None:
             primvars = UsdGeom.PrimvarsAPI(mesh)
