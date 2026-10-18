@@ -205,6 +205,8 @@ class MultiModalWaveSimExtension(_ExtBase):
         # Thrust per screw as a fraction of the vessel's weight.
         # Set before binding a vessel to change it.
         self.thrust_fraction = 0.25
+        # UV per second for the ripple normal map. Shading only.
+        self.normal_scroll = 0.01
         self._sweep = None
         self._autorun_sub = None
         self.thruster = None
@@ -582,6 +584,37 @@ class MultiModalWaveSimExtension(_ExtBase):
         """Draw the wetted triangles and their per-face forces."""
         self.show_forces = bool(enable)
         self._sync_face_capture()
+
+    def _scroll_normal_map(self, stage) -> None:
+        """Drift the ripple texture, so it does not sit still on moving water.
+
+        A static normal map on a moving surface reads as shrink-wrap: the
+        swell moves and the glitter does not, and the eye catches it at once.
+        asv_wave_sim scrolls theirs at 0.01 UV/s (bumpSpeed); this is the
+        same, aimed down the wind so the ripple travels with the sea rather
+        than across it.
+
+        Shading only. The texture perturbs normals and nothing else - the
+        force model integrates against height(), which does not know this
+        exists.
+        """
+        if not self.normal_scroll:
+            return
+        from pxr import Gf, Sdf, UsdShade
+
+        prim = stage.GetPrimAtPath("/World/Looks/Water/StScale")
+        if not prim:
+            return
+        shader = UsdShade.Shader(prim)
+        inp = shader.GetInput("translation")
+        if not inp:
+            inp = shader.CreateInput("translation",
+                                     Sdf.ValueTypeNames.Float2)
+        import numpy as _np
+
+        heading = float(getattr(self.spectrum, "wind_dir", 0.0))
+        d = self.normal_scroll * self._sim_time
+        inp.Set(Gf.Vec2f(float(d * _np.cos(heading)), float(d * _np.sin(heading))))
 
     def _draw_face_forces(self, stage) -> None:
         """The wetted triangles, and one arrow per face along its force.
@@ -1226,6 +1259,7 @@ class MultiModalWaveSimExtension(_ExtBase):
                     self._forces_drawn = self.show_forces
                 if self.follow:
                     self._update_chase_camera(stage)
+                self._scroll_normal_map(stage)
 
         if self.vessel is not None and self.force_model is not None and self.field is not None:
             try:
