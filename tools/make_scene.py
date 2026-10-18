@@ -87,7 +87,38 @@ def _write_png(path, rgb):
         f.write(chunk(b"IEND", b""))
 
 
-def _sky(width, sun_elev_deg, sun_az_deg, brightness=1.0, turbidity=0.35):
+def _noise(shape, octaves=5, seed=7):
+    """Fractal value noise, tiling in x. numpy only, no dependencies.
+
+    Each octave is a coarse random lattice resampled smoothly and added at
+    half the amplitude of the one before. Wrapping in x matters: the sky is
+    equirectangular, so a seam at azimuth 0 would show as a vertical scar in
+    every reflection.
+    """
+    rng = np.random.default_rng(seed)
+    h, w = shape
+    out = np.zeros(shape)
+    amp, res = 1.0, 4
+    for _ in range(octaves):
+        g = rng.random((res + 1, res * 2 + 1))
+        g[:, -1] = g[:, 0]                      # wrap in azimuth
+        yi = np.linspace(0, res, h)
+        xi = np.linspace(0, res * 2, w)
+        y0, x0 = np.floor(yi).astype(int), np.floor(xi).astype(int)
+        fy, fx = (yi - y0)[:, None], (xi - x0)[None, :]
+        # smoothstep, so the lattice does not show as diamonds
+        fy, fx = fy * fy * (3 - 2 * fy), fx * fx * (3 - 2 * fx)
+        y1, x1 = np.minimum(y0 + 1, res), np.minimum(x0 + 1, res * 2)
+        top = g[y0][:, x0] * (1 - fx) + g[y0][:, x1] * fx
+        bot = g[y1][:, x0] * (1 - fx) + g[y1][:, x1] * fx
+        out += amp * (top * (1 - fy) + bot * fy)
+        amp, res = amp * 0.5, res * 2
+    out -= out.min()
+    return out / max(out.max(), 1e-9)
+
+
+def _sky(width, sun_elev_deg, sun_az_deg, brightness=1.0, turbidity=0.35,
+         cloud_cover=0.45, cloud_seed=7):
     height = width // 2
     u = (np.arange(width) + 0.5) / width
     v = (np.arange(height) + 0.5) / height
@@ -109,6 +140,28 @@ def _sky(width, sun_elev_deg, sun_az_deg, brightness=1.0, turbidity=0.35):
     # The sun and its glow are NOT scaled by brightness. A dim sky with a
     # still-bright sun is a sky with contrast; scaling everything together
     # just gives a flat grey one.
+    # Clouds. Without them the sky is a smooth gradient, and a sea at
+    # roughness 0.06 is a mirror - so it reflects a smooth gradient and reads
+    # as a swimming pool. Reflections need structure before water looks like
+    # water; this is worth more than any amount of tuning on the surface
+    # itself.
+    if cloud_cover > 0.0:
+        n = _noise(elev.shape, octaves=5, seed=cloud_seed)
+        # Clouds live in a band: none at the zenith looking straight up
+        # through them, and squashed toward the horizon by perspective.
+        # Clip BEFORE the power: sin(elev) is negative below the horizon
+        # and a fractional power of a negative is NaN, which then spreads
+        # through the whole image and casts to garbage pixels.
+        band = np.clip(np.sin(elev), 0.0, 1.0) ** 0.35 * (np.sin(elev) > 0.02)
+        amount = np.clip((n - (1.0 - cloud_cover)) / max(cloud_cover, 1e-6), 0, 1)
+        amount = (amount ** 1.6) * band
+        lit = np.array([0.92, 0.93, 0.95]) * brightness * 2.2
+        shadow = np.array([0.45, 0.48, 0.55]) * brightness * 2.2
+        # Thicker cloud is darker underneath, which is most of what gives a
+        # sky depth rather than looking like paper.
+        cloud = shadow + (lit - shadow) * (1.0 - amount)[..., None]
+        col = col * (1 - amount[..., None]) + cloud * amount[..., None]
+
     col += np.array([1.0, 0.86, 0.66]) * (np.clip(cos_sun, 0, 1) ** 220)[..., None] * 0.9
     col *= brightness
     col += np.array([1.0, 0.97, 0.90]) * (cos_sun > np.cos(np.radians(1.2)))[..., None]
@@ -170,7 +223,9 @@ if not stage.GetPrimAtPath("/World"):
     UsdGeom.Xform.Define(stage, "/World")
     stage.SetDefaultPrim(stage.GetPrimAtPath("/World"))
 
-image, sun_vec = _sky(WIDTH, SUN_ELEV, SUN_AZ, BRIGHTNESS)
+CLOUDS = float(globals().get("CLOUDS", 0.45))
+image, sun_vec = _sky(WIDTH, SUN_ELEV, SUN_AZ, BRIGHTNESS,
+                      cloud_cover=CLOUDS)
 _write_png(SKY_PNG, image)
 print(f"  wrote {SKY_PNG}  ({image.shape[1]}x{image.shape[0]})")
 

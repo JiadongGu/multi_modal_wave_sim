@@ -28,7 +28,8 @@ PLAY = os.environ.get("MMWS_PLAY", "1") != "0"
 THRUST = float(os.environ.get("MMWS_THRUST", 0.25))
 
 print(f"[start_scene] building {BOAT}")
-g = {"BOAT": BOAT, "SUN_ELEV": 58.0, "SUN_AZ": 135.0, "BRIGHTNESS": 0.45}
+g = {"BOAT": BOAT, "SUN_ELEV": 58.0, "SUN_AZ": 135.0, "BRIGHTNESS": 0.45,
+     "CLOUDS": float(os.environ.get("MMWS_CLOUDS", 0.45))}
 exec(open(TOOLS / "make_scene.py").read(), g)
 
 import mmws.wave_sim.extension as E                      # noqa: E402
