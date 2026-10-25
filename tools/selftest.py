@@ -931,36 +931,56 @@ def test_wake_is_independent_of_sampling_rate():
     assert rel < 0.05, f"wake changed {rel:.1%} when the timestep changed"
 
 
-def test_wake_opens_near_the_kelvin_angle():
-    """The wedge is not drawn anywhere - it falls out of the superposition.
+def test_wake_cone_follows_the_group_velocity():
+    """The wedge angle is asin(c_g/U), NOT Kelvin's 19.47 degrees.
 
-    A deep-water ship wake has a 19.47 degree half-angle, independent of
-    speed. A single wavenumber and a threshold-based measurement will not hit
-    that exactly, but landing in the right neighbourhood is real evidence the
-    rings and the group velocity are doing the work.
+    A single-wavenumber ring model gives a Mach-like cone whose half-angle
+    depends on speed. The true Kelvin angle is speed-INDEPENDENT, and that
+    invariance comes from dispersion - many wavelengths resolved by
+    stationary phase. We shed rings at one wavelength, so we cannot have it.
+
+    Measured: 40.8 deg at 2 m/s, 22.1 at 4, 10.1 at 8, tracking asin(c_g/U)
+    throughout. An earlier version of this test asserted "near 19.47" and
+    passed only because it ran at 4 m/s, where the cone happens to sit near
+    22 deg. Checking two speeds is what makes the test mean anything.
     """
-    spec = SPECTRA.create("jonswap", hs=2.0, tp=7.0)
-    f = FIELDS.create("wake", spectrum=spec, tile_size=128.0, resolution=64,
-                      base="flat", amplitude=0.15, wavelength=6.0,
-                      max_samples=600, min_spacing=0.0, min_interval=0.0)
-    speed, dt, steps = 4.0, 0.05, 241
-    for i in range(steps):
-        t = i * dt
-        f.advance(t)
-        f.set_source([speed * t, 64.0, 0.0], [speed, 0.0, 0.0])
-    t_end = (steps - 1) * dt
-    f.advance(t_end)
-    hull_x = speed * t_end
+    spec = SPECTRA.create("jonswap", hs=0.5, tp=4.0)
 
-    ys = np.linspace(64.0 - 40.0, 64.0 + 40.0, 321)
-    angles = []
-    for astern in (10.0, 20.0, 30.0):
-        lat = np.abs(f.wake_height(hull_x - astern, ys))
-        assert lat.max() > 0.0, f"no wake {astern} m astern"
-        edge = np.max(np.abs(ys[lat > 0.15 * lat.max()] - 64.0))
-        angles.append(math.degrees(math.atan(edge / astern)))
-    mean = sum(angles) / len(angles)
-    assert 12.0 < mean < 30.0, f"half-angle {mean:.1f} deg is nowhere near Kelvin's 19.47"
+    def half_angle(speed):
+        f = FIELDS.create("wake", spectrum=spec, tile_size=512.0, resolution=64,
+                          base="flat", amplitude=0.15, wavelength=6.0,
+                          max_samples=600, min_spacing=0.0, min_interval=0.0,
+                          core=1.0)
+        dt, steps = 0.05, 300
+        for i in range(steps):
+            t = i * dt
+            f.advance(t)
+            f.set_source([speed * t, 256.0, 0.0], [speed, 0.0, 0.0])
+        t_end = (steps - 1) * dt
+        f.advance(t_end)
+        hull_x = speed * t_end
+        ys = np.linspace(256.0 - 60.0, 256.0 + 60.0, 481)
+        angles = []
+        for astern in (15.0, 25.0, 35.0):
+            lat = np.abs(f.wake_height(hull_x - astern, ys))
+            if lat.max() <= 1e-9:
+                continue
+            edge = np.max(np.abs(ys[lat > 0.15 * lat.max()] - 256.0))
+            angles.append(math.degrees(math.atan(edge / astern)))
+        assert angles, f"no wake found astern at {speed} m/s"
+        return sum(angles) / len(angles)
+
+    probe = FIELDS.create("wake", spectrum=spec, wavelength=6.0)
+    for speed in (3.0, 6.0):
+        predicted = math.degrees(math.asin(min(probe.group_speed / speed, 1.0)))
+        measured = half_angle(speed)
+        assert abs(measured - predicted) < 0.25 * predicted, (
+            f"at {speed} m/s expected ~{predicted:.1f} deg, got {measured:.1f}")
+
+    # The thing that proves it is NOT Kelvin: the angle must change with speed.
+    slow, fast = half_angle(3.0), half_angle(6.0)
+    assert slow > 1.5 * fast, (
+        f"cone angle did not fall with speed ({slow:.1f} -> {fast:.1f})")
 
 
 def test_drag_is_lower_ahead_than_abeam():
@@ -1160,7 +1180,7 @@ TESTS = [
     ("wake: zero amplitude leaves the base alone", test_wake_zero_amplitude_is_exactly_the_base, True),
     ("wake: trail is bounded", test_wake_trail_is_bounded, True),
     ("wake: independent of sampling rate", test_wake_is_independent_of_sampling_rate, True),
-    ("wake: opens near the Kelvin angle", test_wake_opens_near_the_kelvin_angle, True),
+    ("wake: cone follows the group velocity", test_wake_cone_follows_the_group_velocity, True),
     ("damping: lower ahead than abeam", test_drag_is_lower_ahead_than_abeam, True),
     ("damping: scalar Cd still works", test_drag_still_accepts_a_scalar, True),
     ("damping: yaw uses the side, not the plan", test_yaw_damping_uses_the_side_not_the_plan, True),

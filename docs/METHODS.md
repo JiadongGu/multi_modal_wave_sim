@@ -251,10 +251,26 @@ depends on **distance from the source**, not on a direction — these are
 concentric circles, not plane waves.
 
 This is Huygens' construction: a Kelvin wake *is* the superposition of
-circular waves emitted continuously along the path. The consequence is that
-the 19.47-degree half-angle is a **result**, not an input. Measured half-angle
-comes out at 20.6–22.2 degrees with nothing in the code that knows what a
-wedge is.
+circular waves emitted continuously along the path, so a wedge appears
+without being drawn.
+
+**But it is not yet the Kelvin wedge, and this is important.** With a single
+wavenumber the construction gives a Mach-like cone of half-angle
+`asin(c_g/U)`, which depends on speed. Measured:
+
+    speed     asin(c_g/U)    measured
+    2 m/s        49.9 deg     40.8 deg
+    4 m/s        22.5 deg     22.1 deg
+    8 m/s        11.0 deg     10.1 deg
+
+The real Kelvin angle is **19.47 degrees at every speed**, and that
+invariance comes from dispersion — many wavelengths, resolved by stationary
+phase. One wavelength cannot produce it. An earlier measurement of "about
+22 degrees, close to 19.47" was taken at 4 m/s only, where the cone happens
+to pass near that value; it was a coincidence and was reported as a result.
+
+So §6.4's "replace the single wavenumber with a spectrum" is not an
+enhancement — it is what the wedge angle being correct depends on.
 
 ### 6.2 Three constraints, each of which was a bug first
 
@@ -293,10 +309,12 @@ before any dissipation. The far field is therefore about 6x too strong
 relative to the near field, and the decay length is a fitted parameter rather
 than physics. This is a known next fix.
 
-The kernel also uses a **single wavenumber**. Replacing it with a spectrum of
-wavenumbers and applying stationary phase would give the genuine Kelvin
-pattern with both transverse and divergent systems. Everything around the
-kernel is bookkeeping that would not change.
+The kernel uses a **single wavenumber**, which is why the cone angle is
+speed-dependent rather than the constant 19.47 degrees of a real Kelvin
+wake (§6.1). Emitting a spectrum of wavenumbers and letting stationary phase
+select the pattern would give the genuine wedge, with both transverse and
+divergent systems. Everything around the kernel is bookkeeping that would
+not change. This is the most important outstanding item in the wake model.
 
 ---
 
@@ -552,7 +570,7 @@ Specific numbers checked against independent references or closed forms:
 | 1 m box, 200 kg, fresh water | 0.200 m draft | 0.200 m |
 | Whaler 170 draft | 0.30 m published | 0.315 m |
 | Survey hull draught | 3.1 m at 380 t published | 3.10 m |
-| Wake half-angle | Kelvin 19.47 deg | 20.6–22.2 deg |
+| Wake cone angle | `asin(c_g/U)`, speed-dependent | tracks it: 40.8/22.1/10.1 deg at 2/4/8 m/s |
 | Whitecap coverage at Hs 4 | Monahan 2.86% | 3.55% |
 | Per-face forces vs reported wrench | identity | 2.4e-4 N |
 | Flat-water settling | zero motion | 0.000000 m p-p |

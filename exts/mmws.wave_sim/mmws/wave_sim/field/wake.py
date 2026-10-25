@@ -9,12 +9,19 @@ of the rings it has left along its track.
 Why rings and not a drawn wedge
 -------------------------------
 A Kelvin wake *is* the superposition of circular waves emitted continuously
-along the vessel's path - that is Huygens' construction, and the famous
-19.47-degree half-angle is a result of it, not an input to it. Starting from
-rings means the wedge appears on its own once the physics is right, and it
-means the obvious next step is a real one: emit a spectrum of wavenumbers
-instead of the single k here, and stationary phase gives the full Kelvin
-pattern with its transverse and divergent systems.
+along the vessel's path - Huygens' construction. Starting from rings means
+the wedge appears on its own rather than being drawn.
+
+IMPORTANT, and measured: with a SINGLE wavenumber this gives a Mach-like
+cone of half-angle asin(c_g/U), not a Kelvin wedge. Measured 40.8 deg at
+2 m/s, 22.1 at 4, 10.1 at 8. The real Kelvin angle is 19.47 degrees at EVERY
+speed, and that invariance comes from dispersion - many wavelengths, resolved
+by stationary phase. One wavelength cannot produce it, and an earlier reading
+of "about 22 degrees at 4 m/s, close to 19.47" was a coincidence at one
+speed.
+
+So emitting a spectrum of wavenumbers here is not an enhancement, it is what
+the wedge angle being right depends on.
 
 A hand-drawn wedge would look correct immediately and teach us nothing, and
 it could never answer the question we actually care about - what the wake does
