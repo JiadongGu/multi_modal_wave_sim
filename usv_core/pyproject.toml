@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "usv_core"
+version = "0.1.0"
+description = "Batched PyTorch vessel physics (waves, buoyancy, damping, propulsion) for many boats at once. No Isaac imports."
+requires-python = ">=3.10"
+dependencies = ["torch", "numpy"]
+
+[tool.setuptools.packages.find]
+include = ["usv_core*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
