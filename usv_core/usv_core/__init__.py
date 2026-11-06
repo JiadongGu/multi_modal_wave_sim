@@ -15,8 +15,15 @@ from .conventions import (
     wxyz_to_xyzw,
     xyzw_to_wxyz,
 )
+from .model import Composite, HullModel, ModelContext, ZeroModel
+from .adapters import ConventionAdapter
 
 __all__ = [
+    "Composite",
+    "ConventionAdapter",
+    "HullModel",
+    "ModelContext",
+    "ZeroModel",
     "BodyState",
     "Wrench",
     "body_to_world",
