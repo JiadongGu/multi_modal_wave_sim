@@ -4,16 +4,24 @@
 """
 
 import argparse
+import sys
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--num_envs", type=int, default=16)
-parser.add_argument("--steps", type=int, default=300, help="policy steps (each is `decimation` physics steps)")
-parser.add_argument("--sea", choices=["waves", "flat"], default="waves")
-parser.add_argument("--throttle", type=float, default=0.0)
+# Our own flags first, then strip them from sys.argv: the launcher re-reads the
+# command line internally and rejects flags it does not know.
+ours = argparse.ArgumentParser(add_help=False)
+ours.add_argument("--num_envs", type=int, default=16)
+ours.add_argument("--steps", type=int, default=300, help="policy steps (each is `decimation` physics steps)")
+ours.add_argument("--sea", choices=["waves", "flat"], default="waves")
+ours.add_argument("--throttle", type=float, default=0.0)
+mine, rest = ours.parse_known_args()
+parser = argparse.ArgumentParser(parents=[ours])
 add_launcher_args(parser)
 args = parser.parse_args()
+sys.argv = [sys.argv[0], *rest]
+for k, v in vars(mine).items():
+    setattr(args, k, v)
 
 import gymnasium as gym  # noqa: E402
 import torch  # noqa: E402
