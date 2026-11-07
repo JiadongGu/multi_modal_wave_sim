@@ -44,7 +44,7 @@ from usv_core import SineWaveField
 
 class WaterPatches:
     def __init__(self, env_ids: list[int], env_origins: torch.Tensor, size: float, resolution: int,
-                 reach: float, device, color=(0.05, 0.28, 0.45)):
+                 reach: float, device, color=(0.02, 0.12, 0.22)):
         """reach: how far [m] the patch centre can move from the env origin (the treadmill radius)."""
         self.env_ids = list(env_ids)
         self.device = device

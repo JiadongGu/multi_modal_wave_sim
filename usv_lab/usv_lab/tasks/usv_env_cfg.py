@@ -95,8 +95,14 @@ class UsvSceneCfg(InteractiveSceneCfg):
             convention="world",                                      # +X forward, +Z up
         ),
     )
-    sky = AssetBaseCfg(prim_path="/World/Sky", spawn=sim_utils.DomeLightCfg(intensity=1500.0))
-    sun = AssetBaseCfg(prim_path="/World/Sun", spawn=sim_utils.DistantLightCfg(intensity=2500.0))
+    # A dim sky and a low sun (30 degrees up): side light is what makes wave slopes visible.
+    # A distant light shines along its local -Z; tilting it 60 degrees about Y gives a 30 degree sun.
+    sky = AssetBaseCfg(prim_path="/World/Sky", spawn=sim_utils.DomeLightCfg(intensity=400.0))
+    sun = AssetBaseCfg(
+        prim_path="/World/Sun",
+        spawn=sim_utils.DistantLightCfg(intensity=3000.0),
+        init_state=AssetBaseCfg.InitialStateCfg(rot=(0.0, math.sin(math.radians(30)), 0.0, math.cos(math.radians(30)))),
+    )
 
 
 @configclass
