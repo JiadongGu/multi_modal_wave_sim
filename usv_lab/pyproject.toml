@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "usv_lab"
+version = "0.1.0"
+description = "Isaac Lab tasks for surface vessels, driven by usv_core physics."
+requires-python = ">=3.10"
+dependencies = ["usv_core"]
+
+# Isaac Lab's train/play/random_agent scripts import every package registered here,
+# which is what makes `--task Usv-Float-Direct-v0` resolvable.
+[project.entry-points."isaaclab.tasks"]
+usv_lab = "usv_lab.tasks"
+
+[tool.setuptools.packages.find]
+include = ["usv_lab*"]
