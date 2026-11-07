@@ -7,6 +7,15 @@ draft), so the two cannot disagree.
 
 For now the rigid body is drawn as a box the size of the hull's bounding box.
 Its centre is the centre of mass, so HullCfg.com is set to the box centre.
+
+Sensors (Isaac Lab 3.0; mount offsets are relative to the boat's body frame,
+x forward, y port, z up, origin at the CoM; quaternions (x, y, z, w)):
+    imu      on the boat body at the deck centre. Proper acceleration
+             (+9.81 up when floating still) and angular velocity, IMU frame.
+    top_cam  child prim of the boat, so it rides and tilts with the hull.
+             Each env's camera renders only its own env plus the shared
+             background (RTX per-env scene partitioning, on by default).
+Set either to None to leave it out (physics-only runs skip the rendering cost).
 """
 
 from __future__ import annotations
@@ -17,6 +26,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import CameraCfg, ImuCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 from isaaclab.visualizers import VisualizerCfg
@@ -31,6 +41,14 @@ HULL = HullCfg(
     columns=(8, 4), com=(0.0, 0.0, (FREEBOARD - DRAFT) / 2),
 )
 HULL_MASS = HullGeometry(HULL).mass
+DECK_Z = (HULL.draft + HULL.freeboard) / 2          # deck height above the CoM (box centre)
+
+CAMERA_PITCH_DOWN = math.radians(10.0)
+
+
+def pitch_down(angle: float) -> tuple[float, float, float, float]:
+    """(x, y, z, w) rotation that tilts a +X-looking ('world' convention) camera down by `angle`."""
+    return (0.0, math.sin(angle / 2), 0.0, math.cos(angle / 2))
 
 
 @configclass
@@ -56,6 +74,24 @@ class UsvSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.CuboidCfg(
             size=(600.0, 600.0, 0.02),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.05, 0.3, 0.5), opacity=0.55),
+        ),
+    )
+    imu: ImuCfg | None = ImuCfg(
+        prim_path="{ENV_REGEX_NS}/Boat",
+        offset=ImuCfg.OffsetCfg(pos=(0.0, 0.0, DECK_Z)),          # deck centre
+    )
+    top_cam: CameraCfg | None = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Boat/top_cam",
+        update_period=1 / 30,                                        # once per policy step
+        update_latest_camera_pose=True,                              # keep data.pos_w / quat_w current
+        width=128,
+        height=96,
+        data_types=["rgb", "distance_to_image_plane"],
+        spawn=sim_utils.PinholeCameraCfg(clipping_range=(0.1, 200.0)),   # default lens: ~47 deg horizontal FOV
+        offset=CameraCfg.OffsetCfg(
+            pos=(1.0, 0.0, DECK_Z + 1.0),                            # 1 m forward of centre, 1 m above the deck
+            rot=pitch_down(CAMERA_PITCH_DOWN),
+            convention="world",                                      # +X forward, +Z up
         ),
     )
     sky = AssetBaseCfg(prim_path="/World/Sky", spawn=sim_utils.DomeLightCfg(intensity=1500.0))

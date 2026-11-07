@@ -52,6 +52,8 @@ class UsvEnv(DirectRLEnv):
     def __init__(self, cfg: UsvFloatEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
         self.boat = self.scene["boat"]
+        self.imu = self.scene.sensors.get("imu")          # None when switched off in the config
+        self.camera = self.scene.sensors.get("top_cam")
         dev = self.device
         self.geo = HullGeometry(cfg.hull, device=dev, dtype=torch.float32)
         # Mass and inertia come from the hull, not the engine. The rigid body has no collision shape, so the
