@@ -8,6 +8,17 @@ Each physics substep (`_apply_action`, `decimation` times per policy step):
   4. ask usv_core's Composite for each boat's force and torque (world frame, about the CoM)
   5. hand them to the engine's wrench composer (is_global: world frame, applied at the CoM)
 The engine integrates; gravity stays on in the engine and buoyancy cancels it.
+
+Treadmill (keeping boats on their plot)
+---------------------------------------
+Each boat has a plot of `env_spacing` metres around its env origin. When a boat
+gets more than `recenter_radius` from the plot centre, it is moved back to the
+centre with its velocity, heading and tilt unchanged, and the distance it was
+moved is added to its `sea_offset`. Every position the physics sees is
+plot position + sea_offset, so the boat keeps meeting the waves it would have
+met had it kept going: forces depend only on the sea there and on relative
+positions, so the move is invisible to the physics. The boat feels open sea;
+in the scene it never leaves its plot.
 """
 
 from __future__ import annotations
@@ -60,13 +71,19 @@ class UsvEnv(DirectRLEnv):
         self.requested = torch.zeros(self.num_envs, 2, device=dev)
         self.sim_time = 0.0
         self._down = torch.tensor([0.0, 0.0, -1.0], device=dev).expand(self.num_envs, 3)
+        self.sea_offset = torch.zeros(self.num_envs, 3, device=dev)          # treadmill: distance moved back so far
 
     # ------------------------------------------------------------------ physics
 
+    def plot_position(self) -> torch.Tensor:
+        """[N, 3] CoM position relative to the boat's own plot centre (what the scene shows)."""
+        return self.boat.data.root_com_pos_w.torch - self.scene.env_origins
+
     def boat_state(self) -> BodyState:
+        """The boats as the physics sees them: plot position + treadmill offset (the 'true' voyage position)."""
         d = self.boat.data
         return BodyState(
-            pos=d.root_com_pos_w.torch - self.scene.env_origins,
+            pos=self.plot_position() + self.sea_offset,
             quat=d.root_link_quat_w.torch,
             lin_vel=d.root_com_lin_vel_w.torch,
             ang_vel=d.root_com_ang_vel_w.torch,
@@ -74,6 +91,21 @@ class UsvEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.requested = actions.clamp(-1.0, 1.0)
+        self.recenter()
+
+    def recenter(self) -> None:
+        """Treadmill: move boats that strayed back to their plot centre and remember how far."""
+        plot = self.plot_position()
+        far = plot[:, :2].norm(dim=-1) > self.cfg.recenter_radius
+        if not bool(far.any()):
+            return
+        ids = far.nonzero(as_tuple=False).squeeze(-1)
+        shift = torch.zeros_like(plot[ids])
+        shift[:, :2] = plot[ids, :2]                        # horizontal only; height and attitude untouched
+        self.sea_offset[ids] += shift
+        pose = self.boat.data.root_link_pose_w.torch[ids].clone()   # (x, y, z, qx, qy, qz, qw)
+        pose[:, :3] -= shift
+        self.boat.write_root_pose_to_sim_index(root_pose=pose, env_ids=ids)   # velocities are not touched
 
     def _apply_action(self) -> None:
         dt = self.physics_dt
@@ -99,10 +131,9 @@ class UsvEnv(DirectRLEnv):
         s = self.boat_state()
         up_z = -world_to_body(s.quat, self._down)[:, 2]          # z of the hull's up axis in the world
         capsized = up_z < self.cfg.capsize_up_z
-        drifted = s.pos[:, :2].norm(dim=-1) > self.cfg.max_distance
         bad = ~torch.isfinite(s.pos).all(-1)
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        return capsized | drifted | bad, time_out
+        return capsized | bad, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
         if env_ids is None:
@@ -122,3 +153,4 @@ class UsvEnv(DirectRLEnv):
         self.actuators.reset(env_ids)
         self.model.reset(env_ids)
         self.requested[env_ids] = 0.0
+        self.sea_offset[env_ids] = 0.0

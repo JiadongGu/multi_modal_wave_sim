@@ -83,7 +83,7 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     sea_seed: int = 0
 
     capsize_up_z = 0.2                   # reset when the hull's up axis has z below this (> ~78 degrees of tilt)
-    max_distance = 100.0                 # reset when a boat drifts this far from its env origin [m]
+    recenter_radius = 10.0               # treadmill: move a boat back to its plot centre beyond this [m]
     reset_yaw = (-math.pi, math.pi)
 
     def __post_init__(self):

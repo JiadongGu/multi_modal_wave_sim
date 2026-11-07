@@ -62,6 +62,10 @@ with launch_simulation(cfg, args):
                   f" [{z.min():+.3f}, {z.max():+.3f}]  surge {speed.mean():+.2f} m/s"
                   f"  tilt max {torch.rad2deg(torch.arccos(up_z.clamp(-1, 1))).max():5.1f} deg"
                   f"  resets so far {resets}  finite={bool(torch.isfinite(s.pos).all())}", flush=True)
+            plot_r = u.plot_position()[:, :2].norm(dim=-1)
+            voyage = s.pos[:, :2].norm(dim=-1)
+            print(f"   treadmill: max distance from plot centre {plot_r.max():5.1f} m"
+                  f"   voyage distance mean {voyage.mean():6.1f} m (max {voyage.max():6.1f})", flush=True)
             if args.debug:
                 ctx = ModelContext(t=u.sim_time, dt=u.physics_dt, sea=u.sea, actions=u.actuators.state)
                 parts = u.model.parts(s, ctx)
