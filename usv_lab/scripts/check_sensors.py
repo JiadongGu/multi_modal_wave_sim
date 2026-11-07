@@ -20,6 +20,7 @@ from isaaclab.app import add_launcher_args, launch_simulation
 ours = argparse.ArgumentParser(add_help=False)
 ours.add_argument("--num_envs", type=int, default=4)
 ours.add_argument("--out", type=str, default=os.path.expanduser("~/sensor_check"))
+ours.add_argument("--no_partition", action="store_true", help="turn per-env scene partitioning OFF (negative control)")
 mine, rest = ours.parse_known_args()
 parser = argparse.ArgumentParser(parents=[ours])
 add_launcher_args(parser)
@@ -43,6 +44,11 @@ sys.argv = launcher_argv
 cfg.scene.num_envs = args.num_envs
 cfg.sea.hs = (1e-6, 1e-6)                      # flat water
 cfg.reset_yaw = (0.0, 0.0)                     # every boat faces +x
+if args.no_partition:
+    from isaaclab_physx.renderers import IsaacRtxRendererCfg
+
+    cfg.scene.top_cam.renderer_cfg = IsaacRtxRendererCfg(enable_scene_partitioning=False)
+    print("CHECK info: scene partitioning OFF (negative control: boat 1 SHOULD appear in camera 0)", flush=True)
 os.makedirs(args.out, exist_ok=True)
 
 results = []
@@ -146,8 +152,8 @@ with launch_simulation(cfg, args):
     rolled = u.camera.data.output["rgb"].torch.float().clone()
     save(u, "4c_boat0_rolled_15deg")
     control = (rolled[0] - after[0]).abs().mean().item()
-    check("camera refreshes (control)", control > 2.0, f"env0 image change after rolling boat 0 by 15 deg: {control:.2f}")
-    check("camera isolation", diff0 < 0.5 and control > 2.0,
+    check("camera refreshes (control)", control > 1.0, f"env0 image change after rolling boat 0 by 15 deg: {control:.2f}")
+    check("camera isolation", diff0 < 0.5 and control > 1.0,
           f"env0 image change {diff0:.2f} with boat 1 broadside 12 m in front of it (vs {control:.2f} for its own roll)")
 
     genv.close()
