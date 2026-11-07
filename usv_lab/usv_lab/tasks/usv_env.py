@@ -74,6 +74,12 @@ class UsvEnv(DirectRLEnv):
         self.sim_time = 0.0
         self._down = torch.tensor([0.0, 0.0, -1.0], device=dev).expand(self.num_envs, 3)
         self.sea_offset = torch.zeros(self.num_envs, 3, device=dev)          # treadmill: distance moved back so far
+        self.water = None
+        if cfg.draw_water_envs > 0:
+            from .water_visual import WaterPatches
+
+            self.water = WaterPatches(list(range(min(cfg.draw_water_envs, self.num_envs))),
+                                      cfg.water_patch_size, cfg.water_resolution, dev)
 
     # ------------------------------------------------------------------ physics
 
@@ -94,6 +100,10 @@ class UsvEnv(DirectRLEnv):
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.requested = actions.clamp(-1.0, 1.0)
         self.recenter()
+        if self.water is not None:
+            # drawn for the moment the frame renders, at the end of this policy step
+            self.water.update(self.sea, self.sim_time + self.step_dt, self.scene.env_origins,
+                              self.plot_position()[:, :2], self.sea_offset)
 
     def recenter(self) -> None:
         """Treadmill: move boats that strayed back to their plot centre and remember how far."""

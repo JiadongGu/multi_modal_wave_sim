@@ -3,8 +3,8 @@
     ./isaaclab.sh -p <repo>/usv_lab/scripts/view.py --num_envs 16 --livestream 2
     ./isaaclab.sh -p <repo>/usv_lab/scripts/view.py --num_envs 16 --livestream 2 --tiles
 
---tiles adds a panel beside the main view with one chase camera per boat (behind and above,
-third person; not a training sensor). Camera rendering is switched on automatically for it.
+--tiles adds a panel beside the main view showing each boat's own top camera (the same sensor
+the policy would use, rendered larger for viewing). Each boat's sea is drawn for the boats shown.
 
 (Isaac Lab's random_agent.py does not load externally registered tasks, hence this script.)
 """
@@ -19,7 +19,8 @@ ours.add_argument("--num_envs", type=int, default=16)
 ours.add_argument("--hold", type=float, default=4.0, help="seconds each random command is held")
 ours.add_argument("--max_throttle", type=float, default=0.6)
 ours.add_argument("--tiles", action="store_true", help="per-boat chase-camera panel")
-ours.add_argument("--chase", type=float, nargs=3, default=(-14.0, -8.0, 7.0), help="chase camera offset [m]")
+ours.add_argument("--view_res", type=int, nargs=2, default=(320, 240), help="boat camera resolution for viewing")
+ours.add_argument("--no_water", action="store_true", help="do not draw each boat's sea")
 mine, rest = ours.parse_known_args()
 parser = argparse.ArgumentParser(parents=[ours])
 add_launcher_args(parser)
@@ -39,15 +40,18 @@ launcher_argv, sys.argv = sys.argv, sys.argv[:1]   # Hydra (config loader) reads
 cfg, _ = resolve_task_config(TASK, "")
 sys.argv = launcher_argv
 cfg.scene.num_envs = args.num_envs
+shown = min(16, args.num_envs)
+if not args.no_water:
+    cfg.draw_water_envs = shown
 if args.tiles:
     from isaaclab_visualizers.kit import KitVisualizerCfg
 
+    cfg.scene.top_cam.width, cfg.scene.top_cam.height = args.view_res
     viz = KitVisualizerCfg(eye=cfg.sim.default_visualizer_cfg.eye, lookat=cfg.sim.default_visualizer_cfg.lookat)
-    viz.streaming_view = True                                   # the tiled panel
-    viz.streaming_envs = list(range(min(16, args.num_envs)))     # which boats get a tile
-    viz.streaming_cam_target_prim_path = "/World/envs/*/Boat"    # one follow-camera per boat
-    viz.streaming_cam_eye = tuple(args.chase)                   # offset from the boat
-    viz.dock_position = "RIGHT"                                 # beside the main view, not a hidden tab
+    viz.streaming_view = True                                            # the tiled panel
+    viz.streaming_envs = list(range(shown))                              # which boats get a tile
+    viz.streaming_sensor_prim_path = "/World/envs/env_.*/Boat/top_cam"   # each boat's own camera
+    viz.dock_position = "RIGHT"                                          # beside the main view, not a hidden tab
     cfg.sim.visualizer_cfgs = [viz]
 
 with launch_simulation(cfg, args):

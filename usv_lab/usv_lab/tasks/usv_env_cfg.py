@@ -67,14 +67,15 @@ class UsvSceneCfg(InteractiveSceneCfg):
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, HULL.com[2])),
     )
-    # Visual only: a translucent plane at the mean water level, so motion is visible.
-    # The physics sea is usv_core's; nothing draws its waves yet.
-    sea_level = AssetBaseCfg(
-        prim_path="/World/SeaLevel",
+    # Distant backdrop, shared by every camera. Each boat's own sea is drawn by water_visual.py
+    # (when draw_water_envs > 0); this sits 3 m down so it never shows through wave troughs.
+    backdrop = AssetBaseCfg(
+        prim_path="/World/Backdrop",
         spawn=sim_utils.CuboidCfg(
-            size=(600.0, 600.0, 0.02),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.05, 0.3, 0.5), opacity=0.55),
+            size=(4000.0, 4000.0, 0.02),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.03, 0.18, 0.3)),
         ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -3.0)),
     )
     imu: ImuCfg | None = ImuCfg(
         prim_path="{ENV_REGEX_NS}/Boat",
@@ -109,7 +110,7 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     state_space = 0
 
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation, physics=PhysxCfg())
-    scene: UsvSceneCfg = UsvSceneCfg(num_envs=16, env_spacing=30.0, replicate_physics=True)
+    scene: UsvSceneCfg = UsvSceneCfg(num_envs=16, env_spacing=100.0, replicate_physics=True)
 
     hull: HullCfg = HULL
     sea: SeaCfg = SeaCfg(hs=(0.5, 2.0), tp=(5.0, 9.0))
@@ -122,6 +123,12 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     recenter_radius = 10.0               # treadmill: move a boat back to its plot centre beyond this [m]
     reset_yaw = (-math.pi, math.pi)
 
+    # Drawn water (visual only): the first `draw_water_envs` environments get their own sea mesh.
+    # Patch + 2 x recenter_radius must stay below env_spacing so patches never overlap.
+    draw_water_envs = 0
+    water_patch_size = 80.0              # [m], centred on the boat
+    water_resolution = 96                # vertices per side
+
     def __post_init__(self):
-        # Overhead view of the whole grid (16 envs at 30 m spacing span about 90 m).
-        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(-70.0, -70.0, 55.0), lookat=(0.0, 0.0, 0.0))
+        # Overhead view of the grid (16 envs at 100 m spacing span about 300 m).
+        self.sim.default_visualizer_cfg = VisualizerCfg(eye=(-230.0, -230.0, 170.0), lookat=(0.0, 0.0, 0.0))
