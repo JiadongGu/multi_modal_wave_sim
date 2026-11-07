@@ -17,10 +17,17 @@ from .conventions import (
 )
 from .model import Composite, HullModel, ModelContext, ZeroModel
 from .adapters import ConventionAdapter
+from .spectrum import SeaCfg, WaveComponents
+from .waves import FlatWater, SineWaveField, WaveField
 
 __all__ = [
     "Composite",
     "ConventionAdapter",
+    "FlatWater",
+    "SeaCfg",
+    "SineWaveField",
+    "WaveComponents",
+    "WaveField",
     "HullModel",
     "ModelContext",
     "ZeroModel",
