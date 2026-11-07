@@ -31,7 +31,9 @@ import usv_lab.tasks  # noqa: E402,F401
 from isaaclab_tasks.utils import resolve_task_config  # noqa: E402
 
 TASK = "Usv-Float-Direct-v0"
+launcher_argv, sys.argv = sys.argv, sys.argv[:1]   # Hydra (config loader) reads argv too; give it none
 cfg, _ = resolve_task_config(TASK, "")
+sys.argv = launcher_argv
 cfg.scene.num_envs = args.num_envs
 if args.sea == "flat":
     cfg.sea.hs = (1e-6, 1e-6)
