@@ -43,6 +43,13 @@ class UsvEnv(DirectRLEnv):
         self.boat = self.scene["boat"]
         dev = self.device
         self.geo = HullGeometry(cfg.hull, device=dev, dtype=torch.float32)
+        # Mass and inertia come from the hull, not the engine. The rigid body has no collision shape, so the
+        # engine has nothing to compute an inertia from and falls back to a tiny default (~18 kg m^2 for a
+        # 4.5 t hull, ~170x too small); with that, the buoyancy righting moment rings faster than the step
+        # can follow and the hull capsizes on its own in flat water.
+        inertia = torch.diag(torch.tensor(self.geo.inertia(), device=dev)).reshape(1, 1, 9).repeat(self.num_envs, 1, 1)
+        self.boat.set_masses_index(masses=torch.full((self.num_envs, 1), self.geo.mass, device=dev))
+        self.boat.set_inertias_index(inertias=inertia)
         self.sea = SineWaveField(cfg.sea, self.num_envs, device=dev, seed=cfg.sea_seed)
         self.model = Composite({
             "buoyancy": ColumnBuoyancy(self.geo),

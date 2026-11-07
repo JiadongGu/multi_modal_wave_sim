@@ -43,6 +43,9 @@ with launch_simulation(cfg, args):
     design_z = cfg.hull.com[2]
     action = torch.tensor([[args.throttle, 0.0]], device=u.device).repeat(u.num_envs, 1)
     from usv_core import ModelContext, world_to_body
+    print(f"SMOKE engine mass {u.boat.data.body_mass.torch[0].tolist()}  inertia diag "
+          f"{u.boat.data.body_inertia.torch[0, 0, [0, 4, 8]].tolist()}  (hull says {u.geo.mass:.0f} kg, {[round(v) for v in u.geo.inertia()]})",
+          flush=True)
     resets = 0
     for i in range(args.steps):
         with torch.inference_mode():
