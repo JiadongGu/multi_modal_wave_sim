@@ -15,6 +15,7 @@ ours.add_argument("--num_envs", type=int, default=16)
 ours.add_argument("--steps", type=int, default=300, help="policy steps (each is `decimation` physics steps)")
 ours.add_argument("--sea", choices=["waves", "flat"], default="waves")
 ours.add_argument("--throttle", type=float, default=0.0)
+ours.add_argument("--debug", action="store_true")
 mine, rest = ours.parse_known_args()
 parser = argparse.ArgumentParser(parents=[ours])
 add_launcher_args(parser)
@@ -41,15 +42,26 @@ with launch_simulation(cfg, args):
     u = env.unwrapped
     design_z = cfg.hull.com[2]
     action = torch.tensor([[args.throttle, 0.0]], device=u.device).repeat(u.num_envs, 1)
+    from usv_core import ModelContext, world_to_body
+    resets = 0
     for i in range(args.steps):
         with torch.inference_mode():
-            env.step(action)
+            _, _, terminated, truncated, _ = env.step(action)
+        resets += int((terminated | truncated).sum())
         if i % 60 == 0 or i == args.steps - 1:
             s = u.boat_state()
             z = s.pos[:, 2] - design_z
             speed = s.lin_vel_body[:, 0]
+            up_z = -world_to_body(s.quat, u._down)[:, 2]
             print(f"SMOKE step {i:4d}  t={u.sim_time:6.2f}s  heave vs design: mean {z.mean():+.3f} m"
                   f" [{z.min():+.3f}, {z.max():+.3f}]  surge {speed.mean():+.2f} m/s"
-                  f"  finite={bool(torch.isfinite(s.pos).all())}", flush=True)
+                  f"  tilt max {torch.rad2deg(torch.arccos(up_z.clamp(-1, 1))).max():5.1f} deg"
+                  f"  resets so far {resets}  finite={bool(torch.isfinite(s.pos).all())}", flush=True)
+            if args.debug:
+                ctx = ModelContext(t=u.sim_time, dt=u.physics_dt, sea=u.sea, actions=u.actuators.state)
+                parts = u.model.parts(s, ctx)
+                print("   commands", u.actuators.state.mean(0).tolist(),
+                      " | " + "  ".join(f"{k}: F={v.force.mean(0).round(decimals=0).tolist()}" for k, v in parts.items()),
+                      flush=True)
     env.close()
 print("SMOKE DONE", flush=True)
