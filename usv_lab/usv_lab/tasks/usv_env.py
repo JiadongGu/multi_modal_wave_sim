@@ -74,12 +74,20 @@ class UsvEnv(DirectRLEnv):
         self.sim_time = 0.0
         self._down = torch.tensor([0.0, 0.0, -1.0], device=dev).expand(self.num_envs, 3)
         self.sea_offset = torch.zeros(self.num_envs, 3, device=dev)          # treadmill: distance moved back so far
+        if self.water is not None:
+            self.water.bind_fabric()
+
+    def _setup_scene(self) -> None:
+        """Runs after the scene is built and BEFORE the simulation resets, which is when Fabric (what the
+        renderer draws from) is filled: the water meshes must exist by then or they are never drawn."""
         self.water = None
-        if cfg.draw_water_envs > 0:
+        if self.cfg.draw_water_envs > 0:
             from .water_visual import WaterPatches
 
-            self.water = WaterPatches(list(range(min(cfg.draw_water_envs, self.num_envs))), self.scene.env_origins,
-                                      cfg.water_patch_size, cfg.water_resolution, cfg.recenter_radius, dev)
+            n = self.scene.num_envs
+            self.water = WaterPatches(list(range(min(self.cfg.draw_water_envs, n))), self.scene.env_origins,
+                                      self.cfg.water_patch_size, self.cfg.water_resolution, self.cfg.recenter_radius,
+                                      self.scene.env_origins.device)
 
     # ------------------------------------------------------------------ physics
 

@@ -17,8 +17,10 @@ the jump is invisible.
 Writing to the renderer
 -----------------------
 The RTX renderer draws from Fabric (Isaac Sim's runtime copy of the scene), not
-from USD: editing the USD `points` attribute after creation changes the stored
-scene but not the picture. So each update writes `points` and `normals` straight
+from USD. Fabric is filled from USD when the simulation resets, so the meshes
+must be created BEFORE that (in the env's _setup_scene); prims added later never
+reach the renderer. And editing the USD `points` attribute afterwards changes
+the stored scene but not the picture. So each update writes `points` and `normals` straight
 into Fabric through usdrt, as Isaac Lab's own Fabric backend does for meshes.
 Points are written in world coordinates with an identity transform, so only the
 point and normal arrays ever change. The USD extent is authored large enough to
@@ -76,13 +78,23 @@ class WaterPatches:
             mesh.CreateExtentAttr(Vt.Vec3fArray([Gf.Vec3f(float(o[0] - half), float(o[1] - half), -20.0),
                                                  Gf.Vec3f(float(o[0] + half), float(o[1] + half), 20.0)]))
             paths.append(path)
+        self._paths = paths
+        self._rt_points = self._rt_normals = None
 
+    def bind_fabric(self) -> None:
+        """Call once after the simulation has reset (Fabric populated): handles to write the meshes each frame."""
         rt_stage = sim_utils.get_current_stage(fabric=True)
-        self._rt_points = [rt_stage.GetPrimAtPath(p).GetAttribute("points") for p in paths]
-        self._rt_normals = [rt_stage.GetPrimAtPath(p).GetAttribute("normals") for p in paths]
+        prims = [rt_stage.GetPrimAtPath(p) for p in self._paths]
+        missing = [p for p, prim in zip(self._paths, prims) if not prim.IsValid()]
+        if missing:
+            raise RuntimeError(f"water meshes not in Fabric (created after the reset?): {missing[:3]}")
+        self._rt_points = [prim.GetAttribute("points") for prim in prims]
+        self._rt_normals = [prim.GetAttribute("normals") for prim in prims]
 
     def update(self, sea: SineWaveField, t: float, env_origins: torch.Tensor, plot_xy: torch.Tensor, sea_offset: torch.Tensor):
         """Redraw. env_origins/plot_xy/sea_offset are the full [N, ...] tensors; only drawn envs are used."""
+        if self._rt_points is None:
+            self.bind_fabric()
         ids = torch.tensor(self.env_ids, device=self.device)
         waves = type(sea.waves)(**{k: getattr(sea.waves, k)[ids] for k in sea.waves.__dataclass_fields__})
         view = SineWaveField.from_components(waves)                             # those envs' seas only
