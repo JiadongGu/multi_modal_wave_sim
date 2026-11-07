@@ -1,10 +1,10 @@
 """Watch the boats: random throttle and helm, held for a few seconds at a time, until you stop it.
 
     ./isaaclab.sh -p <repo>/usv_lab/scripts/view.py --num_envs 16 --livestream 2
-    ./isaaclab.sh -p <repo>/usv_lab/scripts/view.py --num_envs 16 --livestream 2 --tiles --enable_cameras
+    ./isaaclab.sh -p <repo>/usv_lab/scripts/view.py --num_envs 16 --livestream 2 --tiles
 
 --tiles adds a panel beside the main view with one chase camera per boat (behind and above,
-third person; not a training sensor). It needs --enable_cameras or the panel is silently skipped.
+third person; not a training sensor). Camera rendering is switched on automatically for it.
 
 (Isaac Lab's random_agent.py does not load externally registered tasks, hence this script.)
 """
