@@ -20,11 +20,13 @@ from .adapters import ConventionAdapter
 from .spectrum import SeaCfg, WaveComponents
 from .waves import FlatWater, SineWaveField, WaveField
 from .hull import ColumnBuoyancy, HullCfg, HullGeometry
+from .damping import DampingCfg, HydroDamping
 
 __all__ = [
     "ColumnBuoyancy",
     "Composite",
     "ConventionAdapter",
+    "DampingCfg",
     "FlatWater",
     "SeaCfg",
     "SineWaveField",
@@ -33,6 +35,7 @@ __all__ = [
     "HullCfg",
     "HullGeometry",
     "HullModel",
+    "HydroDamping",
     "ModelContext",
     "ZeroModel",
     "BodyState",

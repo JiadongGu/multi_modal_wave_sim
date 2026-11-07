@@ -135,34 +135,51 @@ class HullGeometry:
         c = self.cfg
         return (self.mass * (kx * c.beam) ** 2, self.mass * (ky * c.length) ** 2, self.mass * (kz * c.length) ** 2)
 
+    def _column_points(self, dev, dtype):
+        """Column floor and deck points [C, 3] in the body frame, relative to the CoM. Cached per device/dtype."""
+        key = (dev, dtype)
+        cache = self.__dict__.setdefault("_points_cache", {})
+        if key not in cache:
+            com = torch.tensor(self.cfg.com, dtype=dtype, device=dev)
+            xy = self.xy.to(dev, dtype)
+            zeros = torch.zeros_like(xy[:, :1])
+            floor = torch.cat([xy, self.bottom.to(dev, dtype)[:, None]], -1) - com
+            deck = torch.cat([xy, zeros + self.cfg.freeboard], -1) - com
+            cache[key] = (floor, deck)
+        return cache[key]
+
+    def submersion(self, state: BodyState, sea, t) -> tuple[torch.Tensor, torch.Tensor]:
+        """Place every boat's columns and measure how deep each one sits in its sea.
+
+        Returns floor [N, C, 3] (env-local column floor points) and depth [N, C]
+        (wet depth: water height minus floor, between 0 and the column's height).
+        `sea` None means still water.
+        """
+        floor_b, deck_b = self._column_points(state.device, state.pos.dtype)
+        n = state.num_envs
+        floor = state.pos[:, None, :] + body_to_world(state.quat, floor_b.expand(n, -1, -1))
+        deck_z = state.pos[:, None, 2] + body_to_world(state.quat, deck_b.expand(n, -1, -1))[..., 2]
+        eta = torch.zeros_like(deck_z) if sea is None else sea.height(floor[..., :2], t)
+        depth = torch.minimum((eta - floor[..., 2]).clamp_min(0.0), (deck_z - floor[..., 2]).clamp_min(0.0))
+        return floor, depth
+
+    def wet_fraction(self, depth: torch.Tensor) -> torch.Tensor:
+        """[N] submerged volume over the design displacement, capped at 1. 0 = flying, 1 = at or below design draft."""
+        return ((depth * self.area.to(depth)).sum(-1) / self.volume).clamp(max=1.0)
+
 
 class ColumnBuoyancy(HullModel):
     """Buoyancy and wave-slope force from the hull's columns. Needs ctx.sea (None means still water)."""
 
     def __init__(self, geometry: HullGeometry):
         self.geo = geometry
-        com = torch.tensor(geometry.cfg.com, dtype=geometry.area.dtype, device=geometry.area.device)
-        xy0 = torch.cat([geometry.xy, torch.zeros_like(geometry.area)[:, None]], -1)   # [C, 3] at z = 0
-        self._floor = xy0 + torch.stack([torch.zeros_like(geometry.bottom)] * 2 + [geometry.bottom], -1) - com
-        self._deck = xy0 + torch.stack([torch.zeros_like(geometry.top)] * 2 + [geometry.top], -1) - com
         self._rho_g_area = geometry.cfg.density * geometry.cfg.gravity * geometry.area   # [C]
 
     def wrench(self, state: BodyState, ctx: ModelContext) -> Wrench:
-        dtype, dev = state.pos.dtype, state.device
-        n = state.num_envs
-        floor_b = self._floor.to(dev, dtype).expand(n, -1, -1)                          # [N, C, 3] body
-        deck_b = self._deck.to(dev, dtype).expand(n, -1, -1)
-        floor = state.pos[:, None, :] + body_to_world(state.quat, floor_b)              # [N, C, 3] env-local
-        deck_z = state.pos[:, None, 2] + body_to_world(state.quat, deck_b)[..., 2]       # [N, C]
+        dtype, dev, n = state.pos.dtype, state.device, state.num_envs
+        floor, depth = self.geo.submersion(state, ctx.sea, ctx.t)                       # [N, C, 3], [N, C]
+        slope = torch.zeros_like(floor[..., :2]) if ctx.sea is None else ctx.sea.slope(floor[..., :2], ctx.t)
 
-        if ctx.sea is None:
-            eta = torch.zeros_like(deck_z)
-            slope = torch.zeros_like(floor[..., :2])
-        else:
-            eta = ctx.sea.height(floor[..., :2], ctx.t)
-            slope = ctx.sea.slope(floor[..., :2], ctx.t)
-
-        depth = torch.minimum((eta - floor[..., 2]).clamp_min(0.0), (deck_z - floor[..., 2]).clamp_min(0.0))
         lift = self._rho_g_area.to(dev, dtype) * depth                                  # [N, C]
         force = torch.cat([-lift[..., None] * slope, lift[..., None]], -1)              # [N, C, 3]
 
