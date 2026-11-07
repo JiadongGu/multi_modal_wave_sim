@@ -111,16 +111,17 @@ with launch_simulation(cfg, args):
           f"mean pixel per env {[round(v, 3) for v in rgb_moving.mean(dim=(1, 2, 3)).tolist()]}")
 
     # 4. isolation: boat 1 broadside 12 m in front of boat 0's camera
-    def settle_render():
-        u.scene.write_data_to_sim()
-        u.sim.step(render=True)
-        u.scene.update(u.physics_dt)
+    def settle_render(steps=12):
+        """Render long enough for the camera to refresh (its period is 1/30 s = 4 physics steps)."""
+        for _ in range(steps):
+            u.scene.write_data_to_sim()
+            u.sim.step(render=True)
+            u.scene.update(u.physics_dt)
 
     run(genv, zero, 1)
     still = torch.zeros(n, 6, device=dev)
     u.boat.write_root_velocity_to_sim_index(root_velocity=still)
-    for _ in range(3):
-        settle_render()
+    settle_render()
     before = u.camera.data.output["rgb"].torch.float().clone()
     save(u, "4a_before")
     cam0 = u.camera.data.pos_w.torch[0]
@@ -129,14 +130,25 @@ with launch_simulation(cfg, args):
     pose[0, 1] = cam0[1]
     pose[0, 3:7] = torch.tensor([0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4)], device=dev)   # broadside
     u.boat.write_root_pose_to_sim_index(root_pose=pose, env_ids=torch.tensor([1], device=dev))
-    for _ in range(3):
-        settle_render()
+    u.boat.write_root_velocity_to_sim_index(root_velocity=still)
+    settle_render()
     after = u.camera.data.output["rgb"].torch.float().clone()
     save(u, "4b_boat1_in_front_of_cam0")
     diff0 = (after[0] - before[0]).abs().mean().item()
     diff1 = (after[1] - before[1]).abs().mean().item()
-    check("camera isolation", diff0 < 1.0,
-          f"env0 image change {diff0:.2f} (0-255 scale; boat 1 now 12 m in front of it), env1 image change {diff1:.2f}")
+
+    # positive control: roll boat 0 itself; its image MUST change, proving the camera re-renders
+    pose0 = u.boat.data.root_link_pose_w.torch[0:1].clone()
+    pose0[0, 3:7] = torch.tensor([math.sin(math.radians(15) / 2), 0.0, 0.0, math.cos(math.radians(15) / 2)], device=dev)
+    u.boat.write_root_pose_to_sim_index(root_pose=pose0, env_ids=torch.tensor([0], device=dev))
+    u.boat.write_root_velocity_to_sim_index(root_velocity=still)
+    settle_render()
+    rolled = u.camera.data.output["rgb"].torch.float().clone()
+    save(u, "4c_boat0_rolled_15deg")
+    control = (rolled[0] - after[0]).abs().mean().item()
+    check("camera refreshes (control)", control > 2.0, f"env0 image change after rolling boat 0 by 15 deg: {control:.2f}")
+    check("camera isolation", diff0 < 0.5 and control > 2.0,
+          f"env0 image change {diff0:.2f} with boat 1 broadside 12 m in front of it (vs {control:.2f} for its own roll)")
 
     genv.close()
 
