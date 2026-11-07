@@ -19,8 +19,10 @@ from .model import Composite, HullModel, ModelContext, ZeroModel
 from .adapters import ConventionAdapter
 from .spectrum import SeaCfg, WaveComponents
 from .waves import FlatWater, SineWaveField, WaveField
+from .hull import ColumnBuoyancy, HullCfg, HullGeometry
 
 __all__ = [
+    "ColumnBuoyancy",
     "Composite",
     "ConventionAdapter",
     "FlatWater",
@@ -28,6 +30,8 @@ __all__ = [
     "SineWaveField",
     "WaveComponents",
     "WaveField",
+    "HullCfg",
+    "HullGeometry",
     "HullModel",
     "ModelContext",
     "ZeroModel",
