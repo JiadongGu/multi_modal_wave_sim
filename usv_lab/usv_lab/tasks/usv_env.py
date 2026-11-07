@@ -78,8 +78,8 @@ class UsvEnv(DirectRLEnv):
         if cfg.draw_water_envs > 0:
             from .water_visual import WaterPatches
 
-            self.water = WaterPatches(list(range(min(cfg.draw_water_envs, self.num_envs))),
-                                      cfg.water_patch_size, cfg.water_resolution, dev)
+            self.water = WaterPatches(list(range(min(cfg.draw_water_envs, self.num_envs))), self.scene.env_origins,
+                                      cfg.water_patch_size, cfg.water_resolution, cfg.recenter_radius, dev)
 
     # ------------------------------------------------------------------ physics
 
