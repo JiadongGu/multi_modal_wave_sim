@@ -23,6 +23,7 @@ in the scene it never leaves its plot.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import torch
@@ -86,7 +87,8 @@ class UsvEnv(DirectRLEnv):
 
             n = self.scene.num_envs
             self.water = WaterPatches(list(range(min(self.cfg.draw_water_envs, n))),
-                                      self.cfg.water_patch_size, self.cfg.water_resolution, self.cfg.recenter_radius,
+                                      self.cfg.water_patch_size, self.cfg.water_resolution,
+                                      (self.cfg.recenter_radius or 0.0) if self.cfg.water_follows_boat else 0.0,
                                       self.scene.env_origins.device)
 
     # ------------------------------------------------------------------ physics
@@ -110,10 +112,13 @@ class UsvEnv(DirectRLEnv):
         self.recenter()
         if self.water is not None:
             # drawn for the moment the frame renders, at the end of this policy step
-            self.water.update(self.sea, self.sim_time + self.step_dt, self.plot_position()[:, :2], self.sea_offset)
+            plot_xy = self.plot_position()[:, :2] if self.cfg.water_follows_boat else torch.zeros(self.num_envs, 2, device=self.device)
+            self.water.update(self.sea, self.sim_time + self.step_dt, plot_xy, self.sea_offset)
 
     def recenter(self) -> None:
         """Treadmill: move boats that strayed back to their plot centre and remember how far."""
+        if self.cfg.recenter_radius is None:
+            return
         plot = self.plot_position()
         far = plot[:, :2].norm(dim=-1) > self.cfg.recenter_radius
         if not bool(far.any()):
@@ -161,15 +166,27 @@ class UsvEnv(DirectRLEnv):
         env_ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
         n = env_ids.numel()
 
+        self.sea.resample(env_ids)
+        self.sea_offset[env_ids] = 0.0
+
+        # Start somewhere on the plot, on the local wave surface: a boat spawned at a fixed height can
+        # drop into a trough and plunge under.
+        angle = sample_uniform(0.0, 2.0 * math.pi, (n,), self.device)
+        radius = self.cfg.spawn_radius * torch.sqrt(sample_uniform(0.0, 1.0, (n,), self.device))
+        xy = torch.stack([radius * torch.cos(angle), radius * torch.sin(angle)], -1)
+        query = torch.zeros(self.num_envs, 1, 2, device=self.device)
+        query[env_ids, 0] = xy
+        eta = self.sea.height(query, self.sim_time)[env_ids, 0]
+
         pose = self.boat.data.default_root_pose.torch[env_ids].clone()      # (x, y, z, qx, qy, qz, qw)
         pose[:, :3] += self.scene.env_origins[env_ids]
+        pose[:, :2] += xy
+        pose[:, 2] += eta
         yaw = sample_uniform(*self.cfg.reset_yaw, (n,), self.device)
         pose[:, 3:7] = torch.stack([torch.zeros_like(yaw), torch.zeros_like(yaw), torch.sin(yaw / 2), torch.cos(yaw / 2)], -1)
         self.boat.write_root_pose_to_sim_index(root_pose=pose, env_ids=env_ids)
         self.boat.write_root_velocity_to_sim_index(root_velocity=torch.zeros(n, 6, device=self.device), env_ids=env_ids)
 
-        self.sea.resample(env_ids)
         self.actuators.reset(env_ids)
         self.model.reset(env_ids)
         self.requested[env_ids] = 0.0
-        self.sea_offset[env_ids] = 0.0

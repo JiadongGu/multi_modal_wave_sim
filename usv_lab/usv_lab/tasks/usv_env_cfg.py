@@ -126,7 +126,9 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     sea_seed: int = 0
 
     capsize_up_z = 0.2                   # reset when the hull's up axis has z below this (> ~78 degrees of tilt)
-    recenter_radius = 10.0               # treadmill: move a boat back to its plot centre beyond this [m]
+    recenter_radius: float | None = 10.0  # treadmill: move a boat back to its plot centre beyond this [m]; None = off
+    spawn_radius = 0.0                   # reset: start up to this far from the plot centre [m]
+    water_follows_boat = True            # False: the drawn patch stays fixed at the plot centre
     reset_yaw = (-math.pi, math.pi)
 
     # Drawn water (visual only): the first `draw_water_envs` environments get their own sea mesh.
