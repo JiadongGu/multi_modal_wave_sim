@@ -53,6 +53,12 @@ def measure(u, tag):
     print(f"WATER {tag}: {int(ok.sum())}/{u.num_envs} centre pixels hit something; "
           f"|hit z - sea height| max {err[ok].max():.3f} m, mean {err[ok].mean():.3f} m; "
           f"depth env0..3 {[round(v, 2) for v in d[:4].tolist()]}", flush=True)
+    for i in (err > 0.15).nonzero().flatten().tolist():
+        cam_local = cam.data.pos_w.torch[i, :2] - u.scene.env_origins[i, :2] + u.sea_offset[i, :2]
+        eta_cam = u.sea.height(cam_local[None, None, :].expand(u.num_envs, 1, 2), u.sim_time)[i, 0].item()
+        print(f"WATER   env {i}: camera z {cam.data.pos_w.torch[i, 2]:.2f}, sea height at camera {eta_cam:.2f}, "
+              f"hit z {hit[i, 2]:.2f}, depth {d[i]:.2f}, boat z {u.plot_position()[i, 2]:.2f}, "
+              f"episode step {int(u.episode_length_buf[i])}, Hs {u.sea.waves.hs[i]:.2f}", flush=True)
     save_images_to_file(cam.data.output["rgb"].torch.float() / 255.0, os.path.join(args.out, f"{tag}.png"))
     return bool(ok.all()) and err[ok].max().item() < 0.15
 
@@ -68,5 +74,5 @@ with launch_simulation(cfg, args):
             with torch.inference_mode():
                 env.step(action)
         passed.append(measure(u, tag))
+    print(f"WATER SUMMARY {'PASS' if all(passed) else 'FAIL'} {passed}", flush=True)
     env.close()
-print(f"WATER SUMMARY {'PASS' if all(passed) else 'FAIL'} {passed}", flush=True)
