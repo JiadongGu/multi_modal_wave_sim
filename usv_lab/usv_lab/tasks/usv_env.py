@@ -80,6 +80,7 @@ class UsvEnv(DirectRLEnv):
             self._next_lidar_time = 0.0
         self.sim_time = 0.0
         self._down = torch.tensor([0.0, 0.0, -1.0], device=dev).expand(self.num_envs, 3)
+        self.spawn_xy = torch.zeros(self.num_envs, 2, device=dev)            # where each boat last started, on its plot
         self.sea_offset = torch.zeros(self.num_envs, 3, device=dev)          # treadmill: distance moved back so far
         if self.water is not None:
             self.water.bind_fabric()
@@ -113,11 +114,15 @@ class UsvEnv(DirectRLEnv):
             ang_vel=d.root_com_ang_vel_w.torch,
         )
 
+    def lidar_cylinders(self):
+        """Solid objects the lidar can hit. Tasks with objects override this."""
+        return None
+
     def update_lidar(self) -> None:
         """Scan when the lidar is due, before any treadmill move so position and offset agree."""
         if self.lidar is None or self.sim_time < self._next_lidar_time:
             return
-        scan = self.lidar.scan(self.boat_state(), self.sea, self.sim_time)
+        scan = self.lidar.scan(self.boat_state(), self.sea, self.sim_time, self.lidar_cylinders())
         self.lidar_ranges, self.lidar_hits = scan.ranges, scan.hits
         self._next_lidar_time = self.sim_time + self.cfg.lidar.update_period
 
@@ -196,6 +201,7 @@ class UsvEnv(DirectRLEnv):
         pose = self.boat.data.default_root_pose.torch[env_ids].clone()      # (x, y, z, qx, qy, qz, qw)
         pose[:, :3] += self.scene.env_origins[env_ids]
         pose[:, :2] += xy
+        self.spawn_xy[env_ids] = xy
         pose[:, 2] += eta
         yaw = sample_uniform(*self.cfg.reset_yaw, (n,), self.device)
         pose[:, 3:7] = torch.stack([torch.zeros_like(yaw), torch.zeros_like(yaw), torch.sin(yaw / 2), torch.cos(yaw / 2)], -1)

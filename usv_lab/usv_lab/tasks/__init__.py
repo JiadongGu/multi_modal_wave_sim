@@ -29,3 +29,23 @@ gym.register(
         "skrl_cfg_entry_point": f"{__name__}.agents:skrl_station_ppo_cfg.yaml",
     },
 )
+
+gym.register(
+    id="Usv-PillarNav-Direct-v0",
+    entry_point=f"{__name__}.pillar_env:UsvPillarEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.pillar_env_cfg:UsvPillarEnvCfg",
+        "skrl_cfg_entry_point": f"{__name__}.agents:skrl_pillar_ppo_cfg.yaml",
+    },
+)
+
+gym.register(
+    id="Usv-PillarNav-Play-Direct-v0",
+    entry_point=f"{__name__}.pillar_env:UsvPillarEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.pillar_env_cfg:UsvPillarPlayEnvCfg",
+        "skrl_cfg_entry_point": f"{__name__}.agents:skrl_pillar_ppo_cfg.yaml",
+    },
+)

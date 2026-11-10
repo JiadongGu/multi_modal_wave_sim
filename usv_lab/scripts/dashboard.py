@@ -154,8 +154,8 @@ def run_detail(run_id):
     info["eta_s"] = remaining * run.rollouts * run.num_envs / rate[-1][1] if rate and info["status"] == "training" else None
     info["charts"] = {
         "reward": series(run, "Reward / Total reward (mean)"),
-        "distance": series(run, "Station/mean_distance_m"),
-        "within": series(run, "Station/within_2m_fraction", 100.0),
+        "distance": series(run, "Nav/mean_distance_m") or series(run, "Station/mean_distance_m"),
+        "within": series(run, "Nav/success_rate", 100.0) or series(run, "Station/within_2m_fraction", 100.0),
         "episode": series(run, "Episode / Total timesteps (mean)", run.policy_dt),
         "rate": rate,
         "stepping": series(run, "Stats / Env stepping time (ms)"),
@@ -200,7 +200,7 @@ svg{display:block;width:100%;height:150px;touch-action:none}svg text{fill:var(--
 <h2>Speed</h2><div class="charts" id="speed"></div>
 <h2>GPU, last hour</h2><div class="tiles" id="gputiles" style="margin-bottom:10px"></div><div class="charts" id="gpu"></div>
 </main><script>
-const LEARN=[["reward","Episode reward","mean total per finished episode"],["distance","Distance to centre","mean across boats, metres"],["within","Boats within 2 m of centre","percent"],["episode","Episode length","mean, simulated seconds"]];
+const LEARN=[["reward","Episode reward","mean total per finished episode"],["distance","Distance to goal","mean across boats, metres"],["within","Success","percent: reached the pillar, or within 2 m of centre"],["episode","Episode length","mean, simulated seconds"]];
 const SPEED=[["rate","Environment steps per second","all boats, 5-iteration average"],["stepping","Simulation step time","milliseconds per step"],["update","Learning update time","milliseconds"]];
 const GPU=[["util","GPU utilisation","percent"],["mem","GPU memory","GB"]];
 let selected=null;
@@ -240,7 +240,7 @@ async function tick(){
     const live=list.filter(r=>r.status==="training").length;q("#sub").textContent=live?"training now":"nothing training";
     if(selected){const d=await fetch("/api/run/"+encodeURIComponent(selected)).then(r=>r.json()),c=d.charts,last=a=>a&&a.length?a[a.length-1][1]:null;
       q("#runhead").textContent=`${d.task}, started ${d.started}`;
-      tiles("#tiles",[[`${d.iteration} / ${d.total_iterations}`,"Iteration"],[d.status==="training"?dur(d.eta_s):d.status,d.status==="training"?"Time left":"Status"],[fmt(d.reward),"Episode reward"],[fmt(last(c.distance)),"Mean distance, m"],[fmt(last(c.within))+"%","Within 2 m of centre"],[fmt(d.env_steps_per_s),"Env steps per second"],[fmt(d.sim_seconds_per_s),"Simulated s per real s"]]);
+      tiles("#tiles",[[`${d.iteration} / ${d.total_iterations}`,"Iteration"],[d.status==="training"?dur(d.eta_s):d.status,d.status==="training"?"Time left":"Status"],[fmt(d.reward),"Episode reward"],[fmt(last(c.distance)),"Mean distance to goal, m"],[fmt(last(c.within))+"%","Success"],[fmt(d.env_steps_per_s),"Env steps per second"],[fmt(d.sim_seconds_per_s),"Simulated s per real s"]]);
       q("#prog").style.width=(d.total_iterations?Math.min(100,d.iteration/d.total_iterations*100):0)+"%";
       drawAll("#learn",c,"iter");drawAll("#speed",c,"iter")}
     const g=gpu.latest;if(g)tiles("#gputiles",[[fmt(g.util)+"%","Utilisation"],[`${fmt(g.mem_gb)} / ${fmt(g.total_gb)}`,"Memory, GB"],[fmt(g.temp)+" C","Temperature"],[fmt(g.power)+" W","Power"]]);
