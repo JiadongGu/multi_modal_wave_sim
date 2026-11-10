@@ -49,22 +49,28 @@ with launch_simulation(cfg, args):
     world = u.pillar.data.root_pos_w.torch[:, :2] - u.scene.env_origins[:, :2]
     print(f"PILLAR placed where intended: max error {(world - u.pillar_xy).norm(dim=-1).max():.3f} m", flush=True)
 
-    # lidar: on the upward channel (+4 deg) water rarely answers, so the shortest beam should be this boat's pillar
-    # (the scan is up to 0.1 s old, so allow a little for the boat having moved)
-    mid = u.lidar_ranges[:, 360:540]                      # channel 2 of 3, 180 beams
+    # lidar: scan each boat with and without its pillar; any beam that changes really saw the pillar
     s = u.boat_state()
     to_pillar = torch.cat([u.pillar_xy - s.pos[:, :2], torch.zeros(u.num_envs, 1, device=u.device)], -1)
     body = world_to_body(s.quat, to_pillar)
-    bearing = torch.atan2(body[:, 1], body[:, 0]) % (2 * math.pi)
+    bearing = torch.atan2(body[:, 1], body[:, 0])
     expected = u.distance_to_pillar() - 1.0
-    best = torch.nan_to_num(mid, posinf=1e6).argmin(1)
-    got = mid.gather(1, best[:, None])[:, 0]
-    seen = torch.isfinite(got)
-    beam = best.float() * (2 * math.pi / 180)
-    miss = torch.remainder(beam - bearing + math.pi, 2 * math.pi) - math.pi
-    close = seen & ((got - expected).abs() < 2.0) & (torch.rad2deg(miss.abs()) < 6.0)
-    print(f"PILLAR lidar upward channel: a return on {int(seen.sum())}/{u.num_envs} boats; {int(close.sum())} match this boat's pillar "
-          f"within 2 m and 6 deg; range errors {[round(v, 1) for v in (got - expected).tolist()]}", flush=True)
+    with_pillar = u.lidar.scan(s, u.sea, u.sim_time, u.lidar_cylinders()).ranges
+    without = u.lidar.scan(s, u.sea, u.sim_time).ranges
+    saw = with_pillar < torch.nan_to_num(without, posinf=1e9) - 1e-3             # [N, R]
+    boats = saw.any(1)
+    near = with_pillar.clone()
+    near[~saw] = float("inf")
+    got = near.amin(1)
+    grid = u.lidar.directions
+    beam = near.argmin(1)
+    az = torch.atan2(grid[beam, 1], grid[beam, 0])
+    miss = torch.remainder(az - bearing + math.pi, 2 * math.pi) - math.pi
+    max_ok = u.distance_to_pillar() < cfg.lidar.max_range
+    print(f"PILLAR lidar: {int(boats.sum())}/{u.num_envs} boats have beams that saw their pillar "
+          f"(mean {saw.sum(1).float().mean():.1f} beams); range error max {(got - expected)[boats].abs().max():.2f} m, "
+          f"bearing error max {torch.rad2deg(miss[boats].abs()).max():.1f} deg; "
+          f"boats with no pillar return: {(~boats).nonzero().flatten().tolist()}", flush=True)
 
     # camera: orange pixels, and which boats have the pillar inside the field of view
     img = u.camera.data.output["rgb"].torch.float()
