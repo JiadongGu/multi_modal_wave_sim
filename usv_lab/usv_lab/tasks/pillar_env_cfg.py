@@ -32,7 +32,7 @@ class UsvPillarSceneCfg(UsvSceneCfg):
                 PhysxRigidBodyCfg(disable_gravity=True),
             ],
             mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.3, 0.0), emissive_color=(0.5, 0.12, 0.0)),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.9, 0.09, 0.0)),   # renders as saturated orange under this light
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(30.0, 0.0, PILLAR_CENTRE_Z)),
     )

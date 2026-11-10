@@ -49,8 +49,9 @@ with launch_simulation(cfg, args):
     world = u.pillar.data.root_pos_w.torch[:, :2] - u.scene.env_origins[:, :2]
     print(f"PILLAR placed where intended: max error {(world - u.pillar_xy).norm(dim=-1).max():.3f} m", flush=True)
 
-    # lidar: the middle channel's shortest beam should point at this boat's pillar, at the right distance
-    mid = u.lidar_ranges[:, 180:360]                      # channel 1 of 3, 180 beams
+    # lidar: on the upward channel (+4 deg) water rarely answers, so the shortest beam should be this boat's pillar
+    # (the scan is up to 0.1 s old, so allow a little for the boat having moved)
+    mid = u.lidar_ranges[:, 360:540]                      # channel 2 of 3, 180 beams
     s = u.boat_state()
     to_pillar = torch.cat([u.pillar_xy - s.pos[:, :2], torch.zeros(u.num_envs, 1, device=u.device)], -1)
     body = world_to_body(s.quat, to_pillar)
@@ -61,12 +62,13 @@ with launch_simulation(cfg, args):
     seen = torch.isfinite(got)
     beam = best.float() * (2 * math.pi / 180)
     miss = torch.remainder(beam - bearing + math.pi, 2 * math.pi) - math.pi
-    print(f"PILLAR lidar sees a pillar on {int(seen.sum())}/{u.num_envs} boats; range error max "
-          f"{(got - expected)[seen].abs().max():.2f} m; bearing error max {torch.rad2deg(miss[seen].abs()).max():.1f} deg", flush=True)
+    close = seen & ((got - expected).abs() < 2.0) & (torch.rad2deg(miss.abs()) < 6.0)
+    print(f"PILLAR lidar upward channel: a return on {int(seen.sum())}/{u.num_envs} boats; {int(close.sum())} match this boat's pillar "
+          f"within 2 m and 6 deg; range errors {[round(v, 1) for v in (got - expected).tolist()]}", flush=True)
 
     # camera: orange pixels, and which boats have the pillar inside the field of view
     img = u.camera.data.output["rgb"].torch.float()
-    orange = (img[..., 0] > 150) & (img[..., 1] < 140) & (img[..., 2] < 80)
+    orange = (img[..., 0] > 150) & (img[..., 1] < 150) & (img[..., 2] < 90)
     pixels = orange.sum(dim=(1, 2))
     in_view = torch.rad2deg(torch.atan2(body[:, 1], body[:, 0]).abs()) < 22.0
     print(f"PILLAR camera: orange pixels per boat {pixels.tolist()}", flush=True)
