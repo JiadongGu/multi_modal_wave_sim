@@ -31,6 +31,7 @@ class UsvStationEnvCfg(UsvFloatEnvCfg):
         super().__post_init__()
         self.scene.top_cam = None        # state-only policy: no rendering cost while training
         self.scene.imu = None
+        self.lidar = None
 
 
 @configclass

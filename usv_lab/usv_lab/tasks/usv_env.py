@@ -39,6 +39,7 @@ from usv_core import (
     HullGeometry,
     HydroDamping,
     ModelContext,
+    SeaLidar,
     SineWaveField,
     TwinThruster,
     world_to_body,
@@ -72,6 +73,11 @@ class UsvEnv(DirectRLEnv):
         })
         self.actuators = Actuators(self.num_envs, cfg.actuators, device=dev)
         self.requested = torch.zeros(self.num_envs, 2, device=dev)
+        self.lidar = SeaLidar(cfg.lidar, device=dev) if cfg.lidar is not None else None
+        if self.lidar is not None:
+            self.lidar_ranges = torch.full((self.num_envs, self.lidar.num_rays), float("inf"), device=dev)   # [N, R] m
+            self.lidar_hits = torch.full((self.num_envs, self.lidar.num_rays, 3), float("inf"), device=dev)  # voyage frame
+            self._next_lidar_time = 0.0
         self.sim_time = 0.0
         self._down = torch.tensor([0.0, 0.0, -1.0], device=dev).expand(self.num_envs, 3)
         self.sea_offset = torch.zeros(self.num_envs, 3, device=dev)          # treadmill: distance moved back so far
@@ -107,8 +113,17 @@ class UsvEnv(DirectRLEnv):
             ang_vel=d.root_com_ang_vel_w.torch,
         )
 
+    def update_lidar(self) -> None:
+        """Scan when the lidar is due, before any treadmill move so position and offset agree."""
+        if self.lidar is None or self.sim_time < self._next_lidar_time:
+            return
+        scan = self.lidar.scan(self.boat_state(), self.sea, self.sim_time)
+        self.lidar_ranges, self.lidar_hits = scan.ranges, scan.hits
+        self._next_lidar_time = self.sim_time + self.cfg.lidar.update_period
+
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.requested = actions.clamp(-1.0, 1.0)
+        self.update_lidar()
         self.recenter()
         if self.water is not None:
             # drawn for the moment the frame renders, at the end of this policy step

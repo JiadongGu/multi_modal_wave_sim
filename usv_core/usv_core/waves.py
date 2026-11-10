@@ -47,6 +47,10 @@ class WaveField(ABC):
     def sea_state(self) -> dict[str, torch.Tensor]:
         return {}
 
+    def height_bound(self) -> torch.Tensor | None:
+        """[N] a height the surface never exceeds in magnitude, or None if the sea cannot say."""
+        return None
+
     def resample(self, env_ids: torch.Tensor | None = None) -> None:
         """New seas for env_ids (None: all). Seas with nothing to randomise ignore it."""
 
@@ -65,6 +69,9 @@ class FlatWater(WaveField):
 
     def slope(self, xy, t):
         return torch.zeros_like(xy)
+
+    def height_bound(self):
+        return torch.zeros(self.num_envs, device=self.device, dtype=self.dtype)
 
     def sea_state(self):
         z = torch.zeros(self.num_envs, device=self.device, dtype=self.dtype)
@@ -140,6 +147,9 @@ class SineWaveField(WaveField):
         w = self.waves
         g = w.amp[:, None, :] * w.k[:, None, :] * torch.cos(self._phase(xy, t))  # [N, M, K]
         return torch.stack([(g * w.cos_dir[:, None, :]).sum(-1), (g * w.sin_dir[:, None, :]).sum(-1)], dim=-1)
+
+    def height_bound(self):
+        return self.waves.amp.sum(-1)                     # every crest lining up at once
 
     def sea_state(self):
         return {"hs": self.waves.hs, "tp": self.waves.tp, "heading": self.waves.heading}

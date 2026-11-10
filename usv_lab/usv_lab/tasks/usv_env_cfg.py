@@ -33,7 +33,7 @@ from isaaclab.visualizers import VisualizerCfg
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim.schemas import PhysxRigidBodyCfg
 
-from usv_core import ActuatorCfg, DampingCfg, HullCfg, HullGeometry, SeaCfg, ThrusterCfg
+from usv_core import ActuatorCfg, DampingCfg, HullCfg, HullGeometry, LidarCfg, SeaCfg, ThrusterCfg
 
 DRAFT, FREEBOARD = 0.60, 0.40
 HULL = HullCfg(
@@ -123,6 +123,8 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     damping: DampingCfg = DampingCfg()
     thruster: ThrusterCfg = ThrusterCfg(max_thrust=1000.0)
     actuators: ActuatorCfg = ActuatorCfg()
+    # one lidar per boat, 1 m above the deck centre; None switches it off
+    lidar: LidarCfg | None = LidarCfg(mount=(0.0, 0.0, DECK_Z + 1.0))
     sea_seed: int = 0
 
     capsize_up_z = 0.2                   # reset when the hull's up axis has z below this (> ~78 degrees of tilt)

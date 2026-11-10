@@ -22,6 +22,7 @@ from .waves import FlatWater, SineWaveField, WaveField
 from .hull import ColumnBuoyancy, HullCfg, HullGeometry
 from .damping import DampingCfg, HydroDamping
 from .propulsion import ActuatorCfg, Actuators, ThrusterCfg, TwinThruster
+from .lidar import LidarCfg, LidarScan, SeaLidar
 
 __all__ = [
     "ActuatorCfg",
@@ -38,6 +39,9 @@ __all__ = [
     "WaveComponents",
     "WaveField",
     "HullCfg",
+    "LidarCfg",
+    "LidarScan",
+    "SeaLidar",
     "HullGeometry",
     "HullModel",
     "HydroDamping",
