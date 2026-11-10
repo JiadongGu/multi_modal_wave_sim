@@ -85,7 +85,7 @@ class UsvEnv(DirectRLEnv):
             from .water_visual import WaterPatches
 
             n = self.scene.num_envs
-            self.water = WaterPatches(list(range(min(self.cfg.draw_water_envs, n))), self.scene.env_origins,
+            self.water = WaterPatches(list(range(min(self.cfg.draw_water_envs, n))),
                                       self.cfg.water_patch_size, self.cfg.water_resolution, self.cfg.recenter_radius,
                                       self.scene.env_origins.device)
 
@@ -110,8 +110,7 @@ class UsvEnv(DirectRLEnv):
         self.recenter()
         if self.water is not None:
             # drawn for the moment the frame renders, at the end of this policy step
-            self.water.update(self.sea, self.sim_time + self.step_dt, self.scene.env_origins,
-                              self.plot_position()[:, :2], self.sea_offset)
+            self.water.update(self.sea, self.sim_time + self.step_dt, self.plot_position()[:, :2], self.sea_offset)
 
     def recenter(self) -> None:
         """Treadmill: move boats that strayed back to their plot centre and remember how far."""

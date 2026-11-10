@@ -22,9 +22,11 @@ must be created BEFORE that (in the env's _setup_scene); prims added later never
 reach the renderer. And editing the USD `points` attribute afterwards changes
 the stored scene but not the picture. So each update writes `points` and `normals` straight
 into Fabric through usdrt, as Isaac Lab's own Fabric backend does for meshes.
-Points are written in world coordinates with an identity transform, so only the
-point and normal arrays ever change. The USD extent is authored large enough to
-cover everywhere the patch can move, so the renderer never culls it.
+Points are written relative to the mesh's parent, /World/envs/env_i, which is
+already placed at the env origin: adding the origin again would draw every patch
+at twice its origin. The mesh has no transform of its own, so only the point and
+normal arrays ever change. The USD extent is authored large enough to cover
+everywhere the patch can move, so the renderer never culls it.
 
 Vertices go through the CPU each update: fine for the environments someone
 watches, far too slow for thousands. Draw only the environments being viewed.
@@ -43,7 +45,7 @@ from usv_core import SineWaveField
 
 
 class WaterPatches:
-    def __init__(self, env_ids: list[int], env_origins: torch.Tensor, size: float, resolution: int,
+    def __init__(self, env_ids: list[int], size: float, resolution: int,
                  reach: float, device, color=(0.02, 0.12, 0.22)):
         """reach: how far [m] the patch centre can move from the env origin (the treadmill radius)."""
         self.env_ids = list(env_ids)
@@ -56,10 +58,9 @@ class WaterPatches:
         idx = np.arange(n * n).reshape(n, n)
         quads = np.stack([idx[:-1, :-1], idx[:-1, 1:], idx[1:, 1:], idx[1:, :-1]], -1).reshape(-1)
         stage = sim_utils.get_current_stage()
-        origins = env_origins[self.env_ids].cpu().numpy()
         half = size / 2 + reach
         paths = []
-        for k, i in enumerate(self.env_ids):
+        for i in self.env_ids:
             path = f"/World/envs/env_{i}/Water"
             mesh = UsdGeom.Mesh.Define(stage, path)
             mesh.CreateFaceVertexCountsAttr(Vt.IntArray([4] * ((n - 1) * (n - 1))))
@@ -68,15 +69,13 @@ class WaterPatches:
             mesh.CreateDoubleSidedAttr(True)
             mesh.CreateDisplayColorAttr(Vt.Vec3fArray([Gf.Vec3f(*color)]))
             flat = np.zeros((n * n, 3), np.float32)
-            flat[:, :2] = self.grid.cpu().numpy() + origins[k, :2]
+            flat[:, :2] = self.grid.cpu().numpy()
             mesh.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(flat))
             up = np.zeros_like(flat)
             up[:, 2] = 1.0
             mesh.CreateNormalsAttr(Vt.Vec3fArray.FromNumpy(up))
             mesh.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
-            o = origins[k]
-            mesh.CreateExtentAttr(Vt.Vec3fArray([Gf.Vec3f(float(o[0] - half), float(o[1] - half), -20.0),
-                                                 Gf.Vec3f(float(o[0] + half), float(o[1] + half), 20.0)]))
+            mesh.CreateExtentAttr(Vt.Vec3fArray([Gf.Vec3f(-half, -half, -20.0), Gf.Vec3f(half, half, 20.0)]))
             paths.append(path)
         self._paths = paths
         self._rt_points = self._rt_normals = None
@@ -91,8 +90,8 @@ class WaterPatches:
         self._rt_points = [prim.GetAttribute("points") for prim in prims]
         self._rt_normals = [prim.GetAttribute("normals") for prim in prims]
 
-    def update(self, sea: SineWaveField, t: float, env_origins: torch.Tensor, plot_xy: torch.Tensor, sea_offset: torch.Tensor):
-        """Redraw. env_origins/plot_xy/sea_offset are the full [N, ...] tensors; only drawn envs are used."""
+    def update(self, sea: SineWaveField, t: float, plot_xy: torch.Tensor, sea_offset: torch.Tensor):
+        """Redraw. plot_xy/sea_offset are the full [N, ...] tensors; only drawn envs are used."""
         if self._rt_points is None:
             self.bind_fabric()
         ids = torch.tensor(self.env_ids, device=self.device)
@@ -102,8 +101,8 @@ class WaterPatches:
         voyage = self.grid[None] + centre[:, None, :] + sea_offset[ids, None, :2]
         eta = view.height(voyage, t)                                            # [K, M]
         slope = view.slope(voyage, t)                                           # [K, M, 2]
-        world_xy = self.grid[None] + (env_origins[ids, :2] + centre)[:, None, :]
-        points = torch.cat([world_xy, eta[..., None]], -1).float().cpu().numpy()
+        local_xy = self.grid[None] + centre[:, None, :]                         # relative to the env origin
+        points = torch.cat([local_xy, eta[..., None]], -1).float().cpu().numpy()
         normals = torch.cat([-slope, torch.ones_like(eta)[..., None]], -1)
         normals = (normals / normals.norm(dim=-1, keepdim=True)).float().cpu().numpy()
         for k in range(len(self.env_ids)):
