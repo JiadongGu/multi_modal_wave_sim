@@ -125,6 +125,8 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     actuators: ActuatorCfg = ActuatorCfg()
     # one lidar per boat, 1 m above the deck centre; None switches it off
     lidar: LidarCfg | None = LidarCfg(mount=(0.0, 0.0, DECK_Z + 1.0))
+    sensor_feed_every = 15               # policy steps between live dashboard updates (2 Hz); 0 removes the feed
+    sensor_feed_boats = 8
     sea_seed: int = 0
 
     capsize_up_z = 0.2                   # reset when the hull's up axis has z below this (> ~78 degrees of tilt)

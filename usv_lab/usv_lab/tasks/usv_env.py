@@ -45,6 +45,7 @@ from usv_core import (
     world_to_body,
 )
 
+from .sensor_feed import SensorFeed
 from .usv_env_cfg import UsvFloatEnvCfg
 
 
@@ -74,6 +75,8 @@ class UsvEnv(DirectRLEnv):
         self.actuators = Actuators(self.num_envs, cfg.actuators, device=dev)
         self.requested = torch.zeros(self.num_envs, 2, device=dev)
         self.lidar = SeaLidar(cfg.lidar, device=dev) if cfg.lidar is not None else None
+        has_sensor = self.camera is not None or self.lidar is not None
+        self.feed = SensorFeed(self, cfg.sensor_feed_every, cfg.sensor_feed_boats) if cfg.sensor_feed_every > 0 and has_sensor else None
         if self.lidar is not None:
             self.lidar_ranges = torch.full((self.num_envs, self.lidar.num_rays), float("inf"), device=dev)   # [N, R] m
             self.lidar_hits = torch.full((self.num_envs, self.lidar.num_rays, 3), float("inf"), device=dev)  # voyage frame
@@ -128,6 +131,8 @@ class UsvEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.requested = actions.clamp(-1.0, 1.0)
+        if self.feed is not None:
+            self.feed.maybe_publish()
         self.update_lidar()
         self.recenter()
         if self.water is not None:

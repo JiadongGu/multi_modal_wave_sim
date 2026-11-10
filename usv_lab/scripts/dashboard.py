@@ -17,15 +17,19 @@ import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--logs", default=os.path.expanduser("~/IsaacLab/logs/skrl"))
 parser.add_argument("--port", type=int, default=8765)
+parser.add_argument("--feed", default=os.path.expanduser("~/usv_feed"), help="folder the live sensor feed is saved in")
 parser.add_argument("--hosts", default="127.0.0.1,100.77.125.24", help="comma-separated addresses to listen on")
 args = parser.parse_args()
+FEED = Path(args.feed)
+FEED.mkdir(parents=True, exist_ok=True)
 
 GPU_FIELDS = "utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw"
 gpu_history = deque(maxlen=1800)   # one sample every 2 s: the last hour
@@ -172,6 +176,15 @@ def gpu_detail():
             "mem": [[(s["t"] - now) / 60, s["mem_gb"]] for s in samples]}
 
 
+def feed_status():
+    meta = None
+    try:
+        meta = json.loads((FEED / "meta.json").read_text())
+    except (OSError, ValueError):
+        pass
+    return {"enabled": (FEED / "enabled").exists(), "meta": meta, "age_s": time.time() - meta["time"] if meta else None}
+
+
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>USV training</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -191,10 +204,13 @@ tbody tr{cursor:pointer}tbody tr:hover{background:color-mix(in srgb,var(--series
 .bar{height:6px;border-radius:3px;background:var(--line);margin-top:12px;overflow:hidden}.bar i{display:block;height:100%;background:var(--series)}
 .charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}.chart{padding:12px 14px;position:relative}.chart h3{margin:0;font-size:13px;font-weight:600}.chart p{margin:0 0 6px;color:var(--ink3);font-size:12px}
 svg{display:block;width:100%;height:150px;touch-action:none}svg text{fill:var(--ink3);font-size:11px}.tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--surface);padding:3px 7px;border-radius:4px;font-size:12px;white-space:nowrap;display:none;z-index:2;font-variant-numeric:tabular-nums}
+.feedbar{padding:10px 14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}button{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}button[aria-pressed=true]{background:var(--series);border-color:var(--series);color:#fff}#feedmsg{color:var(--ink2)}
+.feedgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:10px;margin-top:10px}.feedgrid:empty{margin:0}.feed{padding:10px 12px}.feed h3{margin:0 0 8px;font-size:13px;font-weight:600}.feedbody{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:center}.feed img{width:100%;display:block;border-radius:4px;image-rendering:pixelated;background:var(--line)}.feed canvas{width:100%;display:block}.feedcap{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;color:var(--ink3);margin-top:4px}
 .empty{height:150px;display:flex;align-items:center;justify-content:center;color:var(--ink3)}
 </style></head><body><main>
 <header><h1>USV training</h1><span id="sub">loading</span></header>
 <h2>Runs</h2><div class="card wrap"><table><thead><tr><th>Started</th><th>Task</th><th>Status</th><th>Iteration</th><th>Boats</th><th>Latest reward</th><th>Best reward</th></tr></thead><tbody id="runs"></tbody></table></div>
+<h2>Live sensors</h2><div class="card feedbar"><button id="feedbtn" type="button" aria-pressed="false">Turn on</button><span id="feedmsg">Off. Shows the first 8 boats' camera and lidar during a run.</span></div><div class="feedgrid" id="feedgrid"></div>
 <h2 id="runhead">Selected run</h2><div class="tiles" id="tiles"></div><div class="bar"><i id="prog" style="width:0"></i></div>
 <h2>Learning</h2><div class="charts" id="learn"></div>
 <h2>Speed</h2><div class="charts" id="speed"></div>
@@ -247,6 +263,29 @@ async function tick(){
     drawAll("#gpu",gpu,"min ago");
   }catch(e){q("#sub").textContent="dashboard lost contact, retrying"}
 }
+let feedOn=false,lastFeed=0,feedBoats=0;
+function drawLidar(canvas,lidar,ranges){
+  const size=canvas.width,c=size/2,scale=(c-6)/lidar.max_range,ctx=canvas.getContext("2d"),css=getComputedStyle(document.documentElement);
+  ctx.clearRect(0,0,size,size);ctx.strokeStyle=css.getPropertyValue("--line");ctx.lineWidth=1;
+  for(const f of [.5,1]){ctx.beginPath();ctx.arc(c,c,f*lidar.max_range*scale,0,2*Math.PI);ctx.stroke()}
+  ctx.fillStyle=css.getPropertyValue("--series");
+  ranges.forEach((r,i)=>{if(r==null)return;const h=r*Math.cos(lidar.elevation[i])*scale,a=lidar.azimuth[i];ctx.fillRect(c-h*Math.sin(a)-1,c-h*Math.cos(a)-1,2.5,2.5)});
+  ctx.fillStyle=css.getPropertyValue("--ink");ctx.beginPath();ctx.moveTo(c,c-7);ctx.lineTo(c-5,c+6);ctx.lineTo(c+5,c+6);ctx.closePath();ctx.fill();
+}
+async function feedTick(){
+  try{
+    const f=await fetch("/api/feed").then(r=>r.json()),btn=q("#feedbtn"),msg=q("#feedmsg"),grid=q("#feedgrid");feedOn=f.enabled;
+    btn.textContent=f.enabled?"Turn off":"Turn on";btn.setAttribute("aria-pressed",f.enabled);
+    if(!f.enabled){msg.textContent="Off. Shows the first 8 boats' camera and lidar during a run.";grid.innerHTML="";feedBoats=0;lastFeed=0;return}
+    if(!f.meta||f.age_s>10){msg.textContent="On, waiting for a run that has a camera or lidar.";return}
+    const m=f.meta;msg.textContent=`Live from ${m.task}, simulated time ${fmt(m.sim_time)} s. Lidar: boat at centre, bow up, outer ring ${m.lidar?m.lidar.max_range:"-"} m.`;
+    if(m.time===lastFeed)return;lastFeed=m.time;
+    if(feedBoats!==m.boats){feedBoats=m.boats;grid.innerHTML=Array.from({length:m.boats},(_,i)=>`<div class="card feed"><h3>Boat ${i}</h3><div class="feedbody"><img alt="Camera view from boat ${i}" data-i="${i}"><canvas width="200" height="200" role="img" aria-label="Lidar scan, top view, boat ${i}" data-i="${i}"></canvas></div><div class="feedcap"><span>Camera</span><span>Lidar, top view</span></div></div>`).join("")}
+    grid.querySelectorAll("img").forEach(im=>{if(m.camera)im.src=`/feed/camera/${im.dataset.i}.png?t=${m.time}`});
+    grid.querySelectorAll("canvas").forEach(cv=>{if(m.lidar)drawLidar(cv,m.lidar,m.lidar.ranges[+cv.dataset.i])});
+  }catch(e){q("#feedmsg").textContent="Lost contact with the dashboard, retrying."}
+}
+q("#feedbtn").onclick=async()=>{await fetch("/api/feed?on="+(feedOn?"0":"1"),{method:"POST"});feedTick()};feedTick();setInterval(feedTick,1000);
 makeCards("#learn",LEARN);makeCards("#speed",SPEED);makeCards("#gpu",GPU);tick();setInterval(tick,3000);
 </script></body></html>"""
 
@@ -264,9 +303,39 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def do_POST(self):
+        parts = urlsplit(self.path)
+        if parts.path != "/api/feed":
+            self.reply('{"error": "not found"}', code=404)
+            return
+        flag = FEED / "enabled"
+        if parse_qs(parts.query).get("on") == ["1"]:
+            flag.touch()
+        else:
+            flag.unlink(missing_ok=True)
+        self.reply(json.dumps({"enabled": flag.exists()}))
+
+    def send_png(self, name):
+        try:
+            data = (FEED / name).read_bytes()
+        except OSError:
+            self.reply('{"error": "no image yet"}', code=404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         try:
-            if self.path == "/":
+            camera = re.fullmatch(r"/feed/camera/(\d{1,2})\.png", urlsplit(self.path).path)
+            if camera:
+                self.send_png(f"camera_{int(camera.group(1))}.png")
+            elif urlsplit(self.path).path == "/api/feed":
+                self.reply(json.dumps(feed_status()))
+            elif self.path == "/":
                 self.reply(PAGE, "text/html; charset=utf-8")
             elif self.path == "/api/runs":
                 self.reply(json.dumps(run_list()))
