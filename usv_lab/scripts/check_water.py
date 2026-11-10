@@ -15,6 +15,8 @@ from isaaclab.app import add_launcher_args, launch_simulation
 ours = argparse.ArgumentParser(add_help=False)
 ours.add_argument("--num_envs", type=int, default=16)
 ours.add_argument("--out", type=str, default=os.path.expanduser("~/water_check"))
+ours.add_argument("--samples", type=int, default=3, help="how many checks to make")
+ours.add_argument("--every", type=int, default=60, help="policy steps between checks")
 mine, rest = ours.parse_known_args()
 parser = argparse.ArgumentParser(parents=[ours])
 add_launcher_args(parser)
@@ -59,7 +61,8 @@ def measure(u, tag):
         print(f"WATER   env {i}: camera z {cam.data.pos_w.torch[i, 2]:.2f}, sea height at camera {eta_cam:.2f}, "
               f"hit z {hit[i, 2]:.2f}, depth {d[i]:.2f}, boat z {u.plot_position()[i, 2]:.2f}, "
               f"episode step {int(u.episode_length_buf[i])}, Hs {u.sea.waves.hs[i]:.2f}", flush=True)
-    save_images_to_file(cam.data.output["rgb"].torch.float() / 255.0, os.path.join(args.out, f"{tag}.png"))
+    if args.samples <= 5:
+        save_images_to_file(cam.data.output["rgb"].torch.float() / 255.0, os.path.join(args.out, f"{tag}.png"))
     return bool(ok.all()) and err[ok].max().item() < 0.15
 
 
@@ -69,10 +72,10 @@ with launch_simulation(cfg, args):
     u = env.unwrapped
     action = torch.zeros(u.num_envs, 2, device=u.device)
     passed = []
-    for tag in ("t2s", "t4s", "t6s"):
-        for _ in range(60):
+    for k in range(args.samples):
+        for _ in range(args.every):
             with torch.inference_mode():
                 env.step(action)
-        passed.append(measure(u, tag))
-    print(f"WATER SUMMARY {'PASS' if all(passed) else 'FAIL'} {passed}", flush=True)
+        passed.append(measure(u, f"t{u.sim_time:05.1f}s"))
+    print(f"WATER SUMMARY {'PASS' if all(passed) else 'FAIL'}: {sum(passed)}/{len(passed)} samples clean", flush=True)
     env.close()
