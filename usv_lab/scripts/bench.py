@@ -89,10 +89,14 @@ def versions():
         v["kit"] = omni.kit.app.get_app().get_build_version()
     except Exception:
         v["kit"] = ""
-    try:
+    try:   # the release (VERSION file at the repo root), then the python package's own number
+        import pathlib
         from importlib.metadata import version
 
-        v["isaaclab"] = version("isaaclab")
+        import isaaclab
+
+        release = (pathlib.Path(isaaclab.__file__).resolve().parents[3] / "VERSION").read_text().strip()
+        v["isaaclab"] = f"{release} (pkg {version('isaaclab')})"
     except Exception:
         v["isaaclab"] = ""
     here = os.path.dirname(os.path.abspath(__file__))
