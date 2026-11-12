@@ -45,8 +45,11 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
       reset count, GPU/driver/Isaac versions; flag black or corrupted camera images at scale
 - [ ] Find each configuration's ceiling (out of memory, or no further gain)
 - [ ] Results table and plots for Tim (CSV plus a page or doc)
-- [ ] Live viewer (`tasks/live_feed.py` + `scripts/live_view.py`): built and tested on fake data;
-      check on the GPU and measure its cost (bench with `--feed` on vs off, 1,024 boats, target < 1%)
+- [x] Live viewer (`tasks/live_feed.py` + `scripts/live_view.py`). Cost at 1,024 boats, all sensors:
+      metrics +0.4%, with camera and lidar +0.6% (identical runs differ by 0.1%). `bench/results/feed/`
+- [x] First sweep, 128-1,024 boats: `bench/results/first/`. Fixed ~20 ms/step in usv_core forces dominates
+      without sensors; lidar on waves and camera read-out dominate with them
+- [ ] usv_core forces: keep constants on the GPU (7 CPU->GPU copies per substep), then re-measure
 
 ## E. Testbeds
 

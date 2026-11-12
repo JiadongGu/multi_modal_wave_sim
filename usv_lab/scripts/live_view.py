@@ -264,7 +264,7 @@ async function refresh(){
     ["Mean surge", L? fmt(L.mean_surge,2)+" m/s" : "–"], ["Max tilt", L? fmt(L.max_tilt_deg,1)+"°" : "–"],
     ["GPU", lastGpu? `${fmt(lastGpu[1],0)}% · ${fmt(lastGpu[2],1)}/${fmt(lastGpu[3],0)} GB` : "–"]];
   $("tiles").innerHTML = tiles.map(([k,v])=>`<div class="tile"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("");
-  line($("c_steps"), data.history.map(h=>[h[0],h[1]]), data.now, "env-steps/s", 0);
+  line($("c_steps"), data.history.map(h=>[h[0],h[1]]), run && !run.live && L ? L.time : data.now, "env-steps/s", 0);   // a stopped run: its own last 5 min
   line($("c_util"), gpu.map(x=>[x[0],x[1]]), data.now, "%", 0);
   line($("c_mem"), gpu.map(x=>[x[0],x[2]]), data.now, "GB", 1);
   const age = L? data.now - L.time : null;

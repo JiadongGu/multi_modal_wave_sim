@@ -64,6 +64,7 @@ class LiveFeed:
         self.last_tick = time.perf_counter()
         self.last_steps = 0
         self.steps = 0
+        self.reset_base = None                           # resets before the first tick (start-up placement) don't count
         self.writes: queue.Queue = queue.Queue(maxsize=1)
         threading.Thread(target=self._writer, daemon=True).start()
 
@@ -100,6 +101,8 @@ class LiveFeed:
                     pass                                 # writer still busy: skip this one
             self.pending = None
         # 2. start the next copy
+        if self.reset_base is None:
+            self.reset_base = env.reset_count
         env = self.env
         k = self.boats
         s = env.boat_state()
@@ -124,7 +127,7 @@ class LiveFeed:
             "time": time.time(), "sim_time": env.sim_time, "steps": self.steps, "num_envs": env.num_envs,
             "env_steps_per_s": (self.steps - self.last_steps) * env.num_envs / wall,
             "sim_s_per_real_s": (self.steps - self.last_steps) * env.step_dt / wall,
-            "resets": env.reset_count, "gpu_mem_torch_gb": torch.cuda.memory_allocated() / 2**30, "boats_shown": k,
+            "resets": env.reset_count - self.reset_base, "gpu_mem_torch_gb": torch.cuda.memory_allocated() / 2**30, "boats_shown": k,
         }
         self.pending = (event, meta, bufs)
         self.last_tick, self.last_steps = now, self.steps
