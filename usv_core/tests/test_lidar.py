@@ -3,7 +3,7 @@ import math
 import torch
 
 from tests.test_waves import one_wave
-from usv_core import BodyState, Cylinders, FlatWater, LidarCfg, SeaCfg, SeaLidar, SineWaveField, quat_to_matrix
+from usv_core import BodyState, FlatWater, LidarCfg, SeaCfg, SeaLidar, SineWaveField, quat_to_matrix
 
 F64 = torch.float64
 
@@ -116,39 +116,3 @@ def test_treadmill_position_is_what_counts():
     assert not torch.equal(torch.nan_to_num(l.scan(boat(), sea, 1.0).ranges, posinf=-1.0),
                            torch.nan_to_num(l.scan(boat(x=37.0), sea, 1.0).ranges, posinf=-1.0))
 
-
-def pillar(x, y=0.0, n=1, radius=1.0, z=(-3.0, 9.0)):
-    return Cylinders(torch.tensor([[[x, y]]], dtype=F64).repeat(n, 1, 1), radius, *z)
-
-
-def level_lidar(**kw):
-    return lidar(channels=1, vertical_fov=(0.0, 0.0), horizontal_res=90.0, **kw)
-
-
-def test_pillar_range_and_bearing():
-    l = level_lidar()                                          # beams at 0, 90, 180, 270 degrees
-    r = l.scan(boat(), FlatWater(1, dtype=F64), 0.0, pillar(20.0)).ranges[0]
-    assert math.isclose(r[0].item(), 19.0, rel_tol=1e-6)       # ahead: centre at 20 m minus 1 m radius
-    assert torch.isinf(r[1:]).all()
-
-
-def test_pillar_beyond_range_or_height_is_not_seen():
-    water = FlatWater(1, dtype=F64)
-    assert torch.isinf(level_lidar(max_range=10.0).scan(boat(), water, 0.0, pillar(20.0)).ranges).all()
-    assert torch.isinf(level_lidar().scan(boat(), water, 0.0, pillar(20.0, z=(5.0, 9.0))).ranges).all()
-
-
-def test_nearer_of_water_and_pillar_wins():
-    l = lidar(channels=1, vertical_fov=(-10.0, -10.0), horizontal_res=90.0)     # meets flat water at 11.5 m
-    water = FlatWater(1, dtype=F64)
-    assert math.isclose(l.scan(boat(), water, 0.0, pillar(50.0)).ranges[0, 0].item(), 2.0 / math.sin(math.radians(10)), rel_tol=1e-3)
-    near = l.scan(boat(), water, 0.0, pillar(6.0)).ranges[0, 0].item()
-    assert math.isclose(near, 5.0 / math.cos(math.radians(10)), rel_tol=1e-3)
-
-
-def test_each_boat_only_sees_its_own_pillar():
-    l = level_lidar()
-    centres = torch.tensor([[[20.0, 0.0]], [[0.0, 30.0]]], dtype=F64)
-    r = l.scan(boat(n=2), FlatWater(2, dtype=F64), 0.0, Cylinders(centres, 1.0, -3.0, 9.0)).ranges
-    assert math.isclose(r[0, 0].item(), 19.0, rel_tol=1e-6) and torch.isinf(r[0, 1:]).all()
-    assert math.isclose(r[1, 1].item(), 29.0, rel_tol=1e-6) and torch.isinf(r[1, [0, 2, 3]]).all()

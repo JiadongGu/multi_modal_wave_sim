@@ -107,7 +107,7 @@ class UsvSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class UsvFloatEnvCfg(DirectRLEnvCfg):
-    """16 boats floating in irregular seas. Actions: (surge, turn) in [-1, 1]. No task reward yet."""
+    """Boats floating in irregular seas, driven by (surge, turn) in [-1, 1]. No task and no reward."""
 
     decimation = 4                       # physics 120 Hz, policy 30 Hz
     episode_length_s = 60.0
@@ -125,14 +125,10 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     actuators: ActuatorCfg = ActuatorCfg()
     # one lidar per boat, 1 m above the deck centre; None switches it off
     lidar: LidarCfg | None = LidarCfg(mount=(0.0, 0.0, DECK_Z + 1.0))
-    sensor_feed_every = 15               # policy steps between live dashboard updates (2 Hz); 0 removes the feed
-    sensor_feed_boats = 8
     sea_seed: int = 0
 
     capsize_up_z = 0.2                   # reset when the hull's up axis has z below this (> ~78 degrees of tilt)
-    recenter_radius: float | None = 10.0  # treadmill: move a boat back to its plot centre beyond this [m]; None = off
-    spawn_radius = 0.0                   # reset: start up to this far from the plot centre [m]
-    water_follows_boat = True            # False: the drawn patch stays fixed at the plot centre
+    recenter_radius = 10.0               # treadmill: move a boat back to its plot centre beyond this [m]
     reset_yaw = (-math.pi, math.pi)
 
     # Drawn water (visual only): the first `draw_water_envs` environments get their own sea mesh.

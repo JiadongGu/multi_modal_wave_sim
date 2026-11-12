@@ -15,8 +15,6 @@ range s while f(s) = o_z + s d_z - eta(o_xy + s d_xy, t) > 0.
   2. March through that window in `march_steps` steps; the first step with f <= 0
      brackets the hit.
   3. Bisect the bracket.
-Solid objects are passed in as vertical cylinders, one set per boat, and intersected exactly; each
-beam reports whichever is nearer, water or cylinder. Each boat only ever sees the cylinders in its own row.
 A crest narrower than one march step can be jumped over (steps are longest on near-level
 rays at long range). A sensor already under the water reads range 0. No return reads inf.
 """
@@ -54,30 +52,6 @@ class LidarScan:
     hits: torch.Tensor
 
 
-@dataclass
-class Cylinders:
-    """Vertical cylinders for each boat. centers [N, C, 2] in the same frame as state.pos; z_low/z_high in that frame too."""
-
-    centers: torch.Tensor
-    radius: float
-    z_low: float
-    z_high: float
-
-
-def cylinder_ranges(o: torch.Tensor, d: torch.Tensor, cyl: Cylinders, max_range: float) -> torch.Tensor:
-    """[N, R] distance along each ray to the nearest cylinder wall (inf: none). o, d are [N, R, 3]."""
-    rel = o[..., None, :2] - cyl.centers[:, None, :, :]                                     # [N, R, C, 2]
-    dxy = d[..., None, :2]
-    a = (dxy**2).sum(-1).clamp_min(1e-12)
-    b = 2.0 * (rel * dxy).sum(-1)
-    c = (rel**2).sum(-1) - cyl.radius**2
-    disc = b**2 - 4.0 * a * c
-    s = (-b - torch.sqrt(disc.clamp_min(0.0))) / (2.0 * a)                                  # entry point
-    z = o[..., None, 2] + s * d[..., None, 2]
-    ok = (disc >= 0) & (s >= 0) & (s <= max_range) & (z >= cyl.z_low) & (z <= cyl.z_high)
-    return torch.where(ok, s, torch.full_like(s, math.inf)).amin(-1)
-
-
 class SeaLidar:
     def __init__(self, cfg: LidarCfg | None = None, device="cpu", dtype=torch.float32):
         self.cfg = cfg or LidarCfg()
@@ -93,7 +67,7 @@ class SeaLidar:
     def num_rays(self) -> int:
         return self.directions.shape[0]
 
-    def scan(self, state: BodyState, sea, t, cylinders: Cylinders | None = None) -> LidarScan:
+    def scan(self, state: BodyState, sea, t) -> LidarScan:
         c, n, r = self.cfg, state.num_envs, self.num_rays
         origin = state.pos + body_to_world(state.quat, self.mount.expand(n, 3))             # [N, 3]
         d = body_to_world(state.quat, self.directions.expand(n, -1, -1))                    # [N, R, 3]
@@ -139,8 +113,6 @@ class SeaLidar:
             low = torch.where(below, low, middle)
 
         ranges = torch.where(found, high, torch.full_like(high, math.inf))
-        if cylinders is not None:
-            ranges = torch.minimum(ranges, cylinder_ranges(o, d, cylinders, c.max_range))
         ranges = torch.where(submerged, torch.zeros_like(ranges), ranges)
         hits = torch.where(torch.isfinite(ranges)[..., None], o + torch.nan_to_num(ranges, posinf=0.0)[..., None] * d,
                            torch.full_like(o, math.inf))

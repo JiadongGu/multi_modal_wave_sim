@@ -4,7 +4,7 @@ Each physics substep (`_apply_action`, `decimation` times per policy step):
   1. read every boat's CoM position, orientation and velocities from the engine
   2. convert at the boundary: world -> env-local (subtract env origins);
      Isaac Lab quaternions are already (x, y, z, w), usv_core's order
-  3. move the actuators toward the policy's commands
+  3. move the actuators toward the commanded (surge, turn)
   4. ask usv_core's Composite for each boat's force and torque (world frame, about the CoM)
   5. hand them to the engine's wrench composer (is_global: world frame, applied at the CoM)
 The engine integrates; gravity stays on in the engine and buoyancy cancels it.
@@ -23,7 +23,6 @@ in the scene it never leaves its plot.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 
 import torch
@@ -45,7 +44,6 @@ from usv_core import (
     world_to_body,
 )
 
-from .sensor_feed import SensorFeed
 from .usv_env_cfg import UsvFloatEnvCfg
 
 
@@ -75,15 +73,12 @@ class UsvEnv(DirectRLEnv):
         self.actuators = Actuators(self.num_envs, cfg.actuators, device=dev)
         self.requested = torch.zeros(self.num_envs, 2, device=dev)
         self.lidar = SeaLidar(cfg.lidar, device=dev) if cfg.lidar is not None else None
-        has_sensor = self.camera is not None or self.lidar is not None
-        self.feed = SensorFeed(self, cfg.sensor_feed_every, cfg.sensor_feed_boats) if cfg.sensor_feed_every > 0 and has_sensor else None
         if self.lidar is not None:
             self.lidar_ranges = torch.full((self.num_envs, self.lidar.num_rays), float("inf"), device=dev)   # [N, R] m
             self.lidar_hits = torch.full((self.num_envs, self.lidar.num_rays, 3), float("inf"), device=dev)  # voyage frame
             self._next_lidar_time = 0.0
         self.sim_time = 0.0
         self._down = torch.tensor([0.0, 0.0, -1.0], device=dev).expand(self.num_envs, 3)
-        self.spawn_xy = torch.zeros(self.num_envs, 2, device=dev)            # where each boat last started, on its plot
         self.sea_offset = torch.zeros(self.num_envs, 3, device=dev)          # treadmill: distance moved back so far
         if self.water is not None:
             self.water.bind_fabric()
@@ -96,10 +91,8 @@ class UsvEnv(DirectRLEnv):
             from .water_visual import WaterPatches
 
             n = self.scene.num_envs
-            self.water = WaterPatches(list(range(min(self.cfg.draw_water_envs, n))),
-                                      self.cfg.water_patch_size, self.cfg.water_resolution,
-                                      (self.cfg.recenter_radius or 0.0) if self.cfg.water_follows_boat else 0.0,
-                                      self.scene.env_origins.device)
+            self.water = WaterPatches(list(range(min(self.cfg.draw_water_envs, n))), self.cfg.water_patch_size,
+                                      self.cfg.water_resolution, self.cfg.recenter_radius, self.scene.env_origins.device)
 
     # ------------------------------------------------------------------ physics
 
@@ -117,33 +110,24 @@ class UsvEnv(DirectRLEnv):
             ang_vel=d.root_com_ang_vel_w.torch,
         )
 
-    def lidar_cylinders(self):
-        """Solid objects the lidar can hit. Tasks with objects override this."""
-        return None
-
     def update_lidar(self) -> None:
         """Scan when the lidar is due, before any treadmill move so position and offset agree."""
         if self.lidar is None or self.sim_time < self._next_lidar_time:
             return
-        scan = self.lidar.scan(self.boat_state(), self.sea, self.sim_time, self.lidar_cylinders())
+        scan = self.lidar.scan(self.boat_state(), self.sea, self.sim_time)
         self.lidar_ranges, self.lidar_hits = scan.ranges, scan.hits
         self._next_lidar_time = self.sim_time + self.cfg.lidar.update_period
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.requested = actions.clamp(-1.0, 1.0)
-        if self.feed is not None:
-            self.feed.maybe_publish()
         self.update_lidar()
         self.recenter()
         if self.water is not None:
             # drawn for the moment the frame renders, at the end of this policy step
-            plot_xy = self.plot_position()[:, :2] if self.cfg.water_follows_boat else torch.zeros(self.num_envs, 2, device=self.device)
-            self.water.update(self.sea, self.sim_time + self.step_dt, plot_xy, self.sea_offset)
+            self.water.update(self.sea, self.sim_time + self.step_dt, self.plot_position()[:, :2], self.sea_offset)
 
     def recenter(self) -> None:
         """Treadmill: move boats that strayed back to their plot centre and remember how far."""
-        if self.cfg.recenter_radius is None:
-            return
         plot = self.plot_position()
         far = plot[:, :2].norm(dim=-1) > self.cfg.recenter_radius
         if not bool(far.any()):
@@ -166,7 +150,7 @@ class UsvEnv(DirectRLEnv):
         )
         self.sim_time += dt
 
-    # ---------------------------------------------------------------------- RL
+    # ------------------------------------------- what Isaac Lab's step loop requires
 
     def _get_observations(self) -> dict:
         s = self.boat_state()
@@ -174,7 +158,7 @@ class UsvEnv(DirectRLEnv):
         return {"policy": obs}
 
     def _get_rewards(self) -> torch.Tensor:
-        return torch.zeros(self.num_envs, device=self.device)   # no task yet: this env only floats
+        return torch.zeros(self.num_envs, device=self.device)   # no task: boats only float and are driven
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         s = self.boat_state()
@@ -194,19 +178,11 @@ class UsvEnv(DirectRLEnv):
         self.sea.resample(env_ids)
         self.sea_offset[env_ids] = 0.0
 
-        # Start somewhere on the plot, on the local wave surface: a boat spawned at a fixed height can
+        # Start at the plot centre, on the local wave surface: a boat spawned at a fixed height can
         # drop into a trough and plunge under.
-        angle = sample_uniform(0.0, 2.0 * math.pi, (n,), self.device)
-        radius = self.cfg.spawn_radius * torch.sqrt(sample_uniform(0.0, 1.0, (n,), self.device))
-        xy = torch.stack([radius * torch.cos(angle), radius * torch.sin(angle)], -1)
-        query = torch.zeros(self.num_envs, 1, 2, device=self.device)
-        query[env_ids, 0] = xy
-        eta = self.sea.height(query, self.sim_time)[env_ids, 0]
-
+        eta = self.sea.height(torch.zeros(self.num_envs, 1, 2, device=self.device), self.sim_time)[env_ids, 0]
         pose = self.boat.data.default_root_pose.torch[env_ids].clone()      # (x, y, z, qx, qy, qz, qw)
         pose[:, :3] += self.scene.env_origins[env_ids]
-        pose[:, :2] += xy
-        self.spawn_xy[env_ids] = xy
         pose[:, 2] += eta
         yaw = sample_uniform(*self.cfg.reset_yaw, (n,), self.device)
         pose[:, 3:7] = torch.stack([torch.zeros_like(yaw), torch.zeros_like(yaw), torch.sin(yaw / 2), torch.cos(yaw / 2)], -1)

@@ -31,7 +31,7 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 
 - [x] IMU on every boat (`ImuCfg`, checked at rest and under thrust)
 - [x] Top camera on every boat, isolated per boat (checked with a negative control)
-- [x] Lidar on every boat against its own sea, plus per-boat vertical cylinders (`usv_core/lidar.py`)
+- [x] Lidar on every boat against its own sea (`usv_core/lidar.py`)
 - [ ] Waves visible to cameras at training scale: move the water mesh update to the GPU (today: CPU, ~16 boats max)
 - [ ] Radar: decide between Isaac Sim's experimental RTX radar and a simple analytic model; implement one
 - [ ] Measure the per-sensor cost (see D)
@@ -57,7 +57,8 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 - [ ] `usv_core`/`usv_lab` section in `docs/METHODS.md`
 - [ ] Pull request: `usv-core` → `main`, after review
 
-## Not on this list (for now)
+## Removed (2026-11-11), to keep the code lean
 
-RL tasks and training (`station_env`, `pillar_env`, skrl configs), reward tuning, a trajectory-tracking
-task, photorealistic water, and RTX lidar. The task code stays in the repo; it is just not being worked on.
+RL tasks and training configs (station keeping, pillar navigation), the training dashboard and live
+sensor feed, the camera snapshot script, and lidar cylinders. All are in git history if needed.
+Not planned: reward tuning, a trajectory-tracking task, photorealistic water, RTX lidar.
