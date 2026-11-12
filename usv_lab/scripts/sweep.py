@@ -63,17 +63,22 @@ for i, (sensors, sea, res, n) in enumerate(plan, 1):
            "--sensors", sensors, "--sea", sea, "--cam_res", res or "128x96", "--steps", str(args.steps),
            "--out", results, "--tag", args.name]
     t0 = time.time()
-    with open(os.path.join(out, "logs", run + ".log"), "w") as log:
-        try:
-            code = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=args.timeout,
-                                  cwd=os.path.expanduser(args.isaaclab)).returncode
-            status = None
-        except subprocess.TimeoutExpired:
-            code, status = "", "timeout"
-            subprocess.run(["pkill", "-f", "bench.py"])     # the launcher's children survive a timeout
-    new_rows = rows_in(results)[before:]
-    if status is None:
-        status = new_rows[-1]["status"] if new_rows else "crash"
+    for attempt in (1, 2):                              # a crash with no result row gets one retry
+        with open(os.path.join(out, "logs", run + (".log" if attempt == 1 else ".retry.log")), "w") as log:
+            try:
+                code = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=args.timeout,
+                                      cwd=os.path.expanduser(args.isaaclab)).returncode
+                status = None
+            except subprocess.TimeoutExpired:
+                code, status = "", "timeout"
+                subprocess.run(["pkill", "-f", "bench.py"])     # the launcher's children survive a timeout
+        new_rows = rows_in(results)[before:]
+        if status is None:
+            status = new_rows[-1]["status"] if new_rows else "crash"
+        if status != "crash" or attempt == 2:
+            break
+        print(f"SWEEP {run}: crashed without a result, retrying in 15 s", flush=True)
+        time.sleep(15)
     secs = round(time.time() - t0)
     log_run({"run": run, "status": status, "exit": code, "seconds": secs,
              "time": datetime.datetime.now().isoformat(timespec="seconds")})
