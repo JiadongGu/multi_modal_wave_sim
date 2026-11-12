@@ -280,7 +280,7 @@ async function refresh(){
     const b = (L.boat||[])[i];
     $("st"+i).textContent = b? `surge ${b.surge} m/s · tilt ${b.tilt_deg}° · heave ${b.heave} m · Hs ${b.hs} m · Tp ${b.tp} s${ret}` : "";
   }
-  if(!info.camera && !info.lidar) $("boats").innerHTML = "<div class='note'>This run has no camera or lidar.</div>";
+  if(!info.camera && !info.lidar) $("boats").innerHTML = "<div class='note'>No camera or lidar in this feed. They show only when the run has them and was started with --feed_sensors.</div>";
 }
 $("run").addEventListener("change", e=>{ selected = e.target.value; $("boats").innerHTML=""; refresh(); });
 ["c_steps","c_util","c_mem"].forEach(id=>hover($(id)));

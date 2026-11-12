@@ -22,6 +22,7 @@ ours.add_argument("--tiles", action="store_true", help="per-boat chase-camera pa
 ours.add_argument("--view_res", type=int, nargs=2, default=(320, 240), help="boat camera resolution for viewing")
 ours.add_argument("--no_water", action="store_true", help="do not draw each boat's sea")
 ours.add_argument("--feed", action="store_true", help="write the live feed for live_view.py")
+ours.add_argument("--feed_sensors", action="store_true", help="feed also shows camera and lidar")
 mine, rest = ours.parse_known_args()
 parser = argparse.ArgumentParser(parents=[ours])
 add_launcher_args(parser)
@@ -41,7 +42,8 @@ launcher_argv, sys.argv = sys.argv, sys.argv[:1]   # Hydra (config loader) reads
 cfg, _ = resolve_task_config(TASK, "")
 sys.argv = launcher_argv
 cfg.scene.num_envs = args.num_envs
-cfg.live_feed = args.feed
+cfg.live_feed = args.feed or args.feed_sensors
+cfg.live_feed_sensors = args.feed_sensors
 shown = min(16, args.num_envs)
 if not args.no_water:
     cfg.draw_water_envs = shown

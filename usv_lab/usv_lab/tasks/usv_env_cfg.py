@@ -135,6 +135,7 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     live_feed = False
     live_feed_dir = "~/usv_feed"
     live_feed_period_s = 1.0             # wall-clock seconds between updates
+    live_feed_sensors = False            # also show camera and lidar (only those the run already has)
     live_feed_boats = 4                  # boats whose camera and lidar are shown
 
     # Drawn water (visual only): the first `draw_water_envs` environments get their own sea mesh.

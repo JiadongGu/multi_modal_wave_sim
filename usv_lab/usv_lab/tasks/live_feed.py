@@ -9,7 +9,8 @@ Each run writes to its own folder, <live_feed_dir>/<pid>/, so several runs never
 
 Cost that remains: a few tiny GPU kernels and a ~0.4 MB copy per tick, and, when nothing else reads
 the camera, one camera read-out per tick (Isaac Lab only fetches images when asked).
-Shows only sensors the run already has: it never switches a sensor on.
+Metrics only, unless `live_feed_sensors` is set; then also camera and lidar, and only those the run
+already has: it never switches a sensor on.
 """
 
 from __future__ import annotations
@@ -54,6 +55,8 @@ class LiveFeed:
         cfg = env.cfg
         self.period = cfg.live_feed_period_s
         self.boats = min(cfg.live_feed_boats, env.num_envs)
+        self.camera = cfg.live_feed_sensors and env.camera is not None
+        self.lidar = cfg.live_feed_sensors and env.lidar is not None
         self.dir = Path(cfg.live_feed_dir).expanduser() / str(os.getpid())
         self.dir.mkdir(parents=True, exist_ok=True)
         self.pending = None                              # (event, meta, pinned buffers) of the copy in flight
@@ -66,8 +69,8 @@ class LiveFeed:
 
         run = {"pid": os.getpid(), "task": type(env).__name__, "num_envs": env.num_envs, "started": time.time(),
                "command": " ".join(sys.argv), "step_dt": env.step_dt, "boats_shown": self.boats,
-               "camera": env.camera is not None, "lidar": env.lidar is not None}
-        if env.lidar is not None:
+               "camera": self.camera, "lidar": self.lidar}
+        if self.lidar:
             d = env.lidar.directions.cpu().numpy()       # once, at start-up: fixed ray directions in the body frame
             run["lidar_azimuth"] = np.round(np.arctan2(d[:, 1], d[:, 0]), 4).tolist()
             run["lidar_elevation"] = np.round(np.arcsin(np.clip(d[:, 2], -1, 1)), 4).tolist()
@@ -109,9 +112,9 @@ class LiveFeed:
                 torch.stack([s.lin_vel_body[:k, 0], tilt[:k], s.pos[:k, 2], sea["hs"][:k], sea["tp"][:k]], -1).flatten(),
             ]).float(),
         }
-        if env.camera is not None:
+        if self.camera:
             gpu["rgb"] = env.camera.data.output["rgb"].torch[:k, ..., :3].clamp(0, 255).to(torch.uint8)
-        if env.lidar is not None:
+        if self.lidar:
             gpu["lidar"] = env.lidar_ranges[:k].float()
         bufs = {name: self._pinned(name, t) for name, t in gpu.items()}
         event = torch.cuda.Event()

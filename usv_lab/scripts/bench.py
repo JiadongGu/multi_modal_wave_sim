@@ -28,6 +28,7 @@ ours.add_argument("--steps", type=int, default=300, help="policy steps per measu
 ours.add_argument("--out", type=str, default="~/bench/adhoc/results.csv")
 ours.add_argument("--tag", type=str, default="")
 ours.add_argument("--feed", action="store_true", help="live feed on (to measure its cost)")
+ours.add_argument("--feed_sensors", action="store_true", help="feed also shows camera and lidar")
 mine, rest = ours.parse_known_args()
 parser = argparse.ArgumentParser(parents=[ours])
 add_launcher_args(parser)
@@ -135,11 +136,12 @@ if "lidar" not in sensors:
 if args.sea == "flat":
     cfg.sea = None
 cfg.draw_water_envs = args.water
-cfg.live_feed = args.feed
+cfg.live_feed = args.feed or args.feed_sensors
+cfg.live_feed_sensors = args.feed_sensors
 
 row = {"tag": args.tag, "time": datetime.datetime.now().isoformat(timespec="seconds"), "status": "started",
        "num_envs": args.num_envs, "sensors": args.sensors, "sea": args.sea, "water_envs": args.water,
-       "cam_res": args.cam_res if "camera" in sensors else "", "live_feed": args.feed, "warmup": args.warmup, "steps": args.steps,
+       "cam_res": args.cam_res if "camera" in sensors else "", "live_feed": "sensors" if args.feed_sensors else ("metrics" if args.feed else ""), "warmup": args.warmup, "steps": args.steps,
        "physics_dt": cfg.sim.dt, "decimation": cfg.decimation}
 
 with launch_simulation(cfg, args):
