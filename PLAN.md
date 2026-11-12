@@ -1,0 +1,63 @@
+# PLAN: what Tim asked for, as a checklist
+
+Scope: tooling to run a dynamics model (Eric's ROM, or our stand-ins) on many boats in Isaac Lab,
+add sensors, and measure how far it scales. RL itself (policies, rewards, training runs) is out of
+scope here; Cody owns that. Work top to bottom inside each section; sections B and C can run in parallel.
+
+Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
+
+## A. Dynamics model plug-in (ready for Eric's ROM)
+
+- [x] `HullModel` socket, `ModelContext`, `Composite` (`usv_core/model.py`)
+- [x] `ConventionAdapter` for models in another convention, e.g. Fossen FRD, 6-vector tau (`usv_core/adapters.py`)
+- [x] Applied in Isaac Lab every physics substep, world-frame wrench at the CoM (`usv_lab/tasks/usv_env.py`)
+- [ ] Write the input/output contract for Eric: inputs, frames, units, time step, memory/reset, and which forces
+      the ROM owns (buoyancy? waves? propulsion?) so nothing is counted twice. `docs/ROM_INTERFACE.md`.
+      **blocked:** answers from Eric and Tim.
+- [ ] `TorchModel`: load a saved PyTorch model file as a `HullModel` (batched on the GPU, optional history window)
+- [ ] Cost knob: an untrained network of configurable size run every step with zero effect, standing in
+      for a heavy ROM so its cost can be measured before it exists
+
+## B. Dynamics versions to benchmark
+
+- [ ] Plain Fossen: flat water + buoyancy + damping + thrust (config switch, no new physics)
+- [x] Waves + Fossen: the current stack (sea + buoyancy + damping + thrust)
+- [ ] BEM + waves + Fossen: a `HullModel` from BEM coefficients (added mass, radiation damping, excitation).
+      **blocked:** the BEM data or tool the team used.
+- [ ] Added mass term (needed for a complete Fossen; uses `ctx.lin_acc` from the previous step)
+- [ ] Compare against the existing (Cody's) implementation. **blocked:** access to that code.
+
+## C. Sensors
+
+- [x] IMU on every boat (`ImuCfg`, checked at rest and under thrust)
+- [x] Top camera on every boat, isolated per boat (checked with a negative control)
+- [x] Lidar on every boat against its own sea, plus per-boat vertical cylinders (`usv_core/lidar.py`)
+- [ ] Waves visible to cameras at training scale: move the water mesh update to the GPU (today: CPU, ~16 boats max)
+- [ ] Radar: decide between Isaac Sim's experimental RTX radar and a simple analytic model; implement one
+- [ ] Measure the per-sensor cost (see D)
+
+## D. Scaling benchmark (Tim's main question)
+
+- [ ] Timing breakdown inside the environment: physics, usv_core forces, lidar, water drawing, rendering
+- [ ] Benchmark script: sweep boats (128 → 4096+) × dynamics version (B) × sensor set (none, IMU, camera,
+      lidar, all) × cost-knob size; headless, held random commands, warm-up excluded, GPU synchronised
+- [ ] Record per run: env-steps/s, simulated s per real s, ms per step by component, peak GPU memory,
+      reset count, GPU/driver/Isaac versions; flag black or corrupted camera images at scale
+- [ ] Find each configuration's ceiling (out of memory, or no further gain)
+- [ ] Results table and plots for Tim (CSV plus a page or doc)
+
+## E. Testbeds
+
+- [x] Wigley hull (analytic, columns)
+- [ ] BlueBoat: build hull columns from a mesh (`HullCfg(shape="mesh")`), reusing `tools/load_hull.py`'s loading
+
+## F. Housekeeping
+
+- [ ] Verify the treadmill jump: IMU and camera readings across a recentre (untested)
+- [ ] `usv_core`/`usv_lab` section in `docs/METHODS.md`
+- [ ] Pull request: `usv-core` → `main`, after review
+
+## Not on this list (for now)
+
+RL tasks and training (`station_env`, `pillar_env`, skrl configs), reward tuning, a trajectory-tracking
+task, photorealistic water, and RTX lidar. The task code stays in the repo; it is just not being worked on.
