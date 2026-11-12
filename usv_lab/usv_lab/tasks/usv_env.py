@@ -35,6 +35,7 @@ from usv_core import (
     BodyState,
     ColumnBuoyancy,
     Composite,
+    FlatWater,
     HullGeometry,
     HydroDamping,
     ModelContext,
@@ -44,6 +45,7 @@ from usv_core import (
     world_to_body,
 )
 
+from .timing import StepTimer
 from .usv_env_cfg import UsvFloatEnvCfg
 
 
@@ -51,6 +53,7 @@ class UsvEnv(DirectRLEnv):
     cfg: UsvFloatEnvCfg
 
     def __init__(self, cfg: UsvFloatEnvCfg, render_mode: str | None = None, **kwargs):
+        self.timer = StepTimer()                            # before setup: the engine may reset during it
         super().__init__(cfg, render_mode, **kwargs)
         self.boat = self.scene["boat"]
         self.imu = self.scene.sensors.get("imu")          # None when switched off in the config
@@ -64,7 +67,8 @@ class UsvEnv(DirectRLEnv):
         inertia = torch.diag(torch.tensor(self.geo.inertia(), device=dev)).reshape(1, 1, 9).repeat(self.num_envs, 1, 1)
         self.boat.set_masses_index(masses=torch.full((self.num_envs, 1), self.geo.mass, device=dev))
         self.boat.set_inertias_index(inertias=inertia)
-        self.sea = SineWaveField(cfg.sea, self.num_envs, device=dev, seed=cfg.sea_seed)
+        self.sea = (SineWaveField(cfg.sea, self.num_envs, device=dev, seed=cfg.sea_seed) if cfg.sea is not None
+                    else FlatWater(self.num_envs, device=dev))
         self.model = Composite({
             "buoyancy": ColumnBuoyancy(self.geo),
             "damping": HydroDamping(self.geo, cfg.damping),
@@ -82,6 +86,12 @@ class UsvEnv(DirectRLEnv):
         self.sea_offset = torch.zeros(self.num_envs, 3, device=dev)          # treadmill: distance moved back so far
         if self.water is not None:
             self.water.bind_fabric()
+        # Timing (off unless switched on, see timing.py). The engine's calls are wrapped in place;
+        # our own parts are timed where they run.
+        self.sim.step = self.timer.wrap(self.sim.step, "physics")
+        self.sim.render = self.timer.wrap(self.sim.render, "render")
+        self.scene.write_data_to_sim = self.timer.wrap(self.scene.write_data_to_sim, "write_sim")
+        self.scene.update = self.timer.wrap(self.scene.update, "scene_update")
 
     def _setup_scene(self) -> None:
         """Runs after the scene is built and BEFORE the simulation resets, which is when Fabric (what the
@@ -120,11 +130,14 @@ class UsvEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.requested = actions.clamp(-1.0, 1.0)
-        self.update_lidar()
-        self.recenter()
+        with self.timer("lidar"):
+            self.update_lidar()
+        with self.timer("treadmill"):
+            self.recenter()
         if self.water is not None:
             # drawn for the moment the frame renders, at the end of this policy step
-            self.water.update(self.sea, self.sim_time + self.step_dt, self.plot_position()[:, :2], self.sea_offset)
+            with self.timer("water"):
+                self.water.update(self.sea, self.sim_time + self.step_dt, self.plot_position()[:, :2], self.sea_offset)
 
     def recenter(self) -> None:
         """Treadmill: move boats that strayed back to their plot centre and remember how far."""
@@ -142,12 +155,13 @@ class UsvEnv(DirectRLEnv):
 
     def _apply_action(self) -> None:
         dt = self.physics_dt
-        commands = self.actuators.step(self.requested, dt)
-        ctx = ModelContext(t=self.sim_time, dt=dt, sea=self.sea, actions=commands)
-        w = self.model(self.boat_state(), ctx)
-        self.boat.permanent_wrench_composer.set_forces_and_torques_index(
-            forces=w.force[:, None, :], torques=w.torque[:, None, :], is_global=True
-        )
+        with self.timer("forces"):
+            commands = self.actuators.step(self.requested, dt)
+            ctx = ModelContext(t=self.sim_time, dt=dt, sea=self.sea, actions=commands)
+            w = self.model(self.boat_state(), ctx)
+            self.boat.permanent_wrench_composer.set_forces_and_torques_index(
+                forces=w.force[:, None, :], torques=w.torque[:, None, :], is_global=True
+            )
         self.sim_time += dt
 
     # ------------------------------------------- what Isaac Lab's step loop requires
@@ -169,6 +183,10 @@ class UsvEnv(DirectRLEnv):
         return capsized | bad, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
+        with self.timer("reset"):
+            self._reset_boats(env_ids)
+
+    def _reset_boats(self, env_ids):
         if env_ids is None:
             env_ids = self.boat._ALL_INDICES
         super()._reset_idx(env_ids)

@@ -119,7 +119,7 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     scene: UsvSceneCfg = UsvSceneCfg(num_envs=16, env_spacing=100.0, replicate_physics=True)
 
     hull: HullCfg = HULL
-    sea: SeaCfg = SeaCfg(hs=(0.5, 2.0), tp=(5.0, 9.0))
+    sea: SeaCfg | None = SeaCfg(hs=(0.5, 2.0), tp=(5.0, 9.0))   # None: flat water (no wave maths at all)
     damping: DampingCfg = DampingCfg()
     thruster: ThrusterCfg = ThrusterCfg(max_thrust=1000.0)
     actuators: ActuatorCfg = ActuatorCfg()
