@@ -45,6 +45,8 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
       reset count, GPU/driver/Isaac versions; flag black or corrupted camera images at scale
 - [ ] Find each configuration's ceiling (out of memory, or no further gain)
 - [ ] Results table and plots for Tim (CSV plus a page or doc)
+- [ ] Live viewer (`tasks/live_feed.py` + `scripts/live_view.py`): built and tested on fake data;
+      check on the GPU and measure its cost (bench with `--feed` on vs off, 1,024 boats, target < 1%)
 
 ## E. Testbeds
 
@@ -61,6 +63,6 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 
 ## Removed (2026-11-11), to keep the code lean
 
-RL tasks and training configs (station keeping, pillar navigation), the training dashboard and live
-sensor feed, the camera snapshot script, and lidar cylinders. All are in git history if needed.
+RL tasks and training configs (station keeping, pillar navigation), the old training dashboard and
+sensor feed (replaced by the live viewer in D), the camera snapshot script, and lidar cylinders. All are in git history if needed.
 Not planned: reward tuning, a trajectory-tracking task, photorealistic water, RTX lidar.

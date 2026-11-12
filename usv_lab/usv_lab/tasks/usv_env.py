@@ -54,6 +54,7 @@ class UsvEnv(DirectRLEnv):
 
     def __init__(self, cfg: UsvFloatEnvCfg, render_mode: str | None = None, **kwargs):
         self.timer = StepTimer()                            # before setup: the engine may reset during it
+        self.reset_count = 0                                # boats reset since start (CPU int: no GPU wait)
         super().__init__(cfg, render_mode, **kwargs)
         self.boat = self.scene["boat"]
         self.imu = self.scene.sensors.get("imu")          # None when switched off in the config
@@ -92,6 +93,11 @@ class UsvEnv(DirectRLEnv):
         self.sim.render = self.timer.wrap(self.sim.render, "render")
         self.scene.write_data_to_sim = self.timer.wrap(self.scene.write_data_to_sim, "write_sim")
         self.scene.update = self.timer.wrap(self.scene.update, "scene_update")
+        self.feed = None
+        if cfg.live_feed:
+            from .live_feed import LiveFeed
+
+            self.feed = LiveFeed(self)
 
     def _setup_scene(self) -> None:
         """Runs after the scene is built and BEFORE the simulation resets, which is when Fabric (what the
@@ -169,6 +175,8 @@ class UsvEnv(DirectRLEnv):
     def _get_observations(self) -> dict:
         s = self.boat_state()
         obs = torch.cat([s.lin_vel_body, s.ang_vel_body, world_to_body(s.quat, self._down), self.actuators.state], -1)
+        if getattr(self, "feed", None) is not None:
+            self.feed.tick()
         return {"policy": obs}
 
     def _get_rewards(self) -> torch.Tensor:
@@ -192,6 +200,7 @@ class UsvEnv(DirectRLEnv):
         super()._reset_idx(env_ids)
         env_ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
         n = env_ids.numel()
+        self.reset_count += n
 
         self.sea.resample(env_ids)
         self.sea_offset[env_ids] = 0.0

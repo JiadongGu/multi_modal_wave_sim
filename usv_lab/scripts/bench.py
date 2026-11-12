@@ -27,6 +27,7 @@ ours.add_argument("--warmup", type=int, default=50)
 ours.add_argument("--steps", type=int, default=300, help="policy steps per measured phase")
 ours.add_argument("--out", type=str, default="~/bench/adhoc/results.csv")
 ours.add_argument("--tag", type=str, default="")
+ours.add_argument("--feed", action="store_true", help="live feed on (to measure its cost)")
 mine, rest = ours.parse_known_args()
 parser = argparse.ArgumentParser(parents=[ours])
 add_launcher_args(parser)
@@ -52,7 +53,7 @@ TASK = "Usv-Float-Direct-v0"
 INSIDE = ["physics", "render", "write_sim", "scene_update", "forces", "lidar", "treadmill", "water", "reset"]
 PARTS = INSIDE + ["other", "total", "read_sensors"]   # other = total - the parts above (Isaac Lab bookkeeping)
 COLUMNS = (
-    ["tag", "time", "status", "num_envs", "sensors", "sea", "water_envs", "cam_res", "warmup", "steps",
+    ["tag", "time", "status", "num_envs", "sensors", "sea", "water_envs", "cam_res", "live_feed", "warmup", "steps",
      "physics_dt", "decimation", "rendering", "wall_s", "env_steps_per_s", "sim_s_per_real_s_per_boat",
      "sim_s_per_real_s_total", "ms_per_step_clean", "ms_per_step_timed"]
     + [f"{p}_{s}" for p in PARTS for s in ("ms", "p95_ms")]
@@ -134,10 +135,11 @@ if "lidar" not in sensors:
 if args.sea == "flat":
     cfg.sea = None
 cfg.draw_water_envs = args.water
+cfg.live_feed = args.feed
 
 row = {"tag": args.tag, "time": datetime.datetime.now().isoformat(timespec="seconds"), "status": "started",
        "num_envs": args.num_envs, "sensors": args.sensors, "sea": args.sea, "water_envs": args.water,
-       "cam_res": args.cam_res if "camera" in sensors else "", "warmup": args.warmup, "steps": args.steps,
+       "cam_res": args.cam_res if "camera" in sensors else "", "live_feed": args.feed, "warmup": args.warmup, "steps": args.steps,
        "physics_dt": cfg.sim.dt, "decimation": cfg.decimation}
 
 with launch_simulation(cfg, args):

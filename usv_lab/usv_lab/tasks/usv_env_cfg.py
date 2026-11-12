@@ -131,6 +131,12 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     recenter_radius = 10.0               # treadmill: move a boat back to its plot centre beyond this [m]
     reset_yaw = (-math.pi, math.pi)
 
+    # Live feed for scripts/live_view.py (see live_feed.py): off unless switched on
+    live_feed = False
+    live_feed_dir = "~/usv_feed"
+    live_feed_period_s = 1.0             # wall-clock seconds between updates
+    live_feed_boats = 4                  # boats whose camera and lidar are shown
+
     # Drawn water (visual only): the first `draw_water_envs` environments get their own sea mesh.
     # Patch + 2 x recenter_radius must stay below env_spacing so patches never overlap.
     draw_water_envs = 0
