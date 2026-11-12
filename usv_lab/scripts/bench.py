@@ -112,11 +112,15 @@ def write_row(row):
     path = os.path.expanduser(args.out)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     new = not os.path.exists(path)
+    columns = COLUMNS
+    if not new:                                   # appending: keep the file's own columns so rows stay aligned
+        with open(path) as f:
+            columns = next(csv.reader(f), COLUMNS)
     with open(path, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=COLUMNS)
+        w = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
         if new:
             w.writeheader()
-        w.writerow({k: row.get(k, "") for k in COLUMNS})
+        w.writerow({k: row.get(k, "") for k in columns})
     print(f"BENCH row written to {path}", flush=True)
 
 
