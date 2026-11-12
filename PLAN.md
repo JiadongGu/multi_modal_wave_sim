@@ -54,6 +54,8 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 ## F. Housekeeping
 
 - [ ] Verify the treadmill jump: IMU and camera readings across a recentre (untested)
+- [ ] Spawn transient in waves: at full throttle from rest, one of 16 boats dipped to -6 m and 70 deg tilt
+      in the first 4 s, then recovered (smoke.py, Hs 0.5-2 m). Likely zero spawn velocity on a moving surface.
 - [ ] `usv_core`/`usv_lab` section in `docs/METHODS.md`
 - [ ] Pull request: `usv-core` → `main`, after review
 
