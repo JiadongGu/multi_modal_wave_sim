@@ -102,7 +102,7 @@ class LiveFeed:
             self.pending = None
         # 2. start the next copy
         if self.reset_base is None:
-            self.reset_base = env.reset_count
+            self.reset_base = self.env.reset_count
         env = self.env
         k = self.boats
         s = env.boat_state()
