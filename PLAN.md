@@ -38,10 +38,10 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 
 ## D. Scaling benchmark (Tim's main question)
 
-- [ ] Timing breakdown inside the environment: physics, usv_core forces, lidar, water drawing, rendering
-- [ ] Benchmark script: sweep boats (128 → 4096+) × dynamics version (B) × sensor set (none, IMU, camera,
-      lidar, all) × cost-knob size; headless, held random commands, warm-up excluded, GPU synchronised
-- [ ] Record per run: env-steps/s, simulated s per real s, ms per step by component, peak GPU memory,
+- [x] Timing breakdown inside the environment: physics, usv_core forces, lidar, water drawing, rendering (`tasks/timing.py`)
+- [x] Benchmark scripts (`scripts/bench.py` one run, `scripts/sweep.py` the grid): boats × flat/waves × sensor set
+      × camera resolution; headless, held random commands, warm-up excluded, GPU synchronised. Cost-knob size: to do
+- [x] Record per run: env-steps/s, simulated s per real s, ms per step by component, peak GPU memory,
       reset count, GPU/driver/Isaac versions; flag black or corrupted camera images at scale
 - [ ] Find each configuration's ceiling (out of memory, or no further gain)
 - [ ] Results table and plots for Tim (CSV plus a page or doc)
