@@ -35,7 +35,8 @@ def png_bytes(rgb: np.ndarray) -> bytes:
 
 
 def replace_file(path: Path, data: bytes) -> None:
-    temporary = path.with_name(path.name + ".tmp")
+    # one temporary name per process: two runs writing the feed at once must not move each other's files
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     temporary.write_bytes(data)
     os.replace(temporary, path)
 
@@ -48,7 +49,10 @@ class SensorFeed:
     def maybe_publish(self) -> None:
         self.step += 1
         if self.step % self.every == 0 and ENABLED.exists():
-            self.publish()
+            try:
+                self.publish()
+            except OSError as err:   # a viewing aid must never stop a simulation
+                print(f"[sensor feed] skipped an update: {err}", flush=True)
 
     def publish(self) -> None:
         env = self.env
