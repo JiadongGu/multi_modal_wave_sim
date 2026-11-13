@@ -14,9 +14,12 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 - [ ] Write the input/output contract for Eric: inputs, frames, units, time step, memory/reset, and which forces
       the ROM owns (buoyancy? waves? propulsion?) so nothing is counted twice. `docs/ROM_INTERFACE.md`.
       **blocked:** answers from Eric and Tim.
-- [ ] `TorchModel`: load a saved PyTorch model file as a `HullModel` (batched on the GPU, optional history window)
-- [ ] Cost knob: an untrained network of configurable size run every step with zero effect, standing in
-      for a heavy ROM so its cost can be measured before it exists
+- [x] `TorchModel`: load a saved PyTorch model file as a `HullModel` (batched on the GPU, optional history window)
+      (`usv_core/rom.py`: TorchScript file + JSON description; modes add / replace / cost_only)
+- [x] Cost knob: an untrained network of configurable size run every step with zero effect, standing in
+      for a heavy ROM so its cost can be measured before it exists (`make_stand_in`, `bench.py --rom 3x256`).
+      Result: ~7.5 ms/step whatever the size up to 6x1024 at 4,096 boats (10.4 ms); input gathering, not the
+      network, is the cost. `bench/results/romcost/`
 
 ## B. Dynamics versions to benchmark
 
