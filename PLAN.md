@@ -49,7 +49,11 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
       metrics +0.4%, with camera and lidar +0.6% (identical runs differ by 0.1%). `bench/results/feed/`
 - [x] First sweep, 128-1,024 boats: `bench/results/first/`. Fixed ~20 ms/step in usv_core forces dominates
       without sensors; lidar on waves and camera read-out dominate with them
-- [ ] usv_core forces: keep constants on the GPU (7 CPU->GPU copies per substep), then re-measure
+- [x] usv_core forces: no per-step CPU->GPU copies, column depths computed once. Forces 19.9 -> 16.3 ms/step,
+      1,024 boats no sensors 41.5k -> 49.3k env-steps/s. `bench/results/forcefix/`
+- [ ] usv_core forces: the remaining ~16 ms is hundreds of tiny GPU launches; try torch.compile / CUDA graphs
+- [ ] Lidar on waves: 77 ms/step at 1,024 boats (largest single cost with sensors on); faster surface search
+- [ ] Camera read-out: 63 ms/step at 1,024 boats (128x96); check Isaac Lab's tiled camera
 
 ## E. Testbeds
 
