@@ -163,6 +163,16 @@ class HullGeometry:
         depth = torch.minimum((eta - floor[..., 2]).clamp_min(0.0), (deck_z - floor[..., 2]).clamp_min(0.0))
         return floor, depth
 
+    def submersion_for(self, state: BodyState, ctx) -> tuple[torch.Tensor, torch.Tensor]:
+        """submersion(state, ctx.sea, ctx.t), worked out once per physics step and shared by every model that
+        needs it (buoyancy and damping both do). Kept in ctx.extras, which is new each step."""
+        memo = ctx.extras.get("_submersion")
+        if memo is not None and memo[0] is self and memo[1] is state:
+            return memo[2]
+        out = self.submersion(state, ctx.sea, ctx.t)
+        ctx.extras["_submersion"] = (self, state, out)
+        return out
+
     def wet_fraction(self, depth: torch.Tensor) -> torch.Tensor:
         """[N] submerged volume over the design displacement, capped at 1. 0 = flying, 1 = at or below design draft."""
         return ((depth * self.area.to(depth)).sum(-1) / self.volume).clamp(max=1.0)
@@ -177,7 +187,7 @@ class ColumnBuoyancy(HullModel):
 
     def wrench(self, state: BodyState, ctx: ModelContext) -> Wrench:
         dtype, dev, n = state.pos.dtype, state.device, state.num_envs
-        floor, depth = self.geo.submersion(state, ctx.sea, ctx.t)                       # [N, C, 3], [N, C]
+        floor, depth = self.geo.submersion_for(state, ctx)                              # [N, C, 3], [N, C]
         slope = torch.zeros_like(floor[..., :2]) if ctx.sea is None else ctx.sea.slope(floor[..., :2], ctx.t)
 
         lift = self._rho_g_area.to(dev, dtype) * depth                                  # [N, C]

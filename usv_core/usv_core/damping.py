@@ -95,17 +95,27 @@ class HydroDamping(HullModel):
         com = geometry.cfg.com
         self._probe_body = torch.tensor([0.0 - com[0], 0.0 - com[1], -0.5 * geometry.cfg.draft - com[2]], dtype=torch.float64)
 
+    def _constants(self, dev, dtype):
+        """(linear, quadratic, generalised mass, probe point) on the device. Cached: copying them every call
+        would make the CPU wait for the GPU each time."""
+        key = (dev, dtype)
+        cache = self.__dict__.setdefault("_const_cache", {})
+        if key not in cache:
+            cache[key] = tuple(x.to(dev, dtype) for x in (self.linear, self.quadratic, self.generalised_mass, self._probe_body))
+        return cache[key]
+
     def wrench(self, state: BodyState, ctx: ModelContext) -> Wrench:
         dev, dtype, n = state.device, state.pos.dtype, state.num_envs
-        _, depth = self.geo.submersion(state, ctx.sea, ctx.t)
+        linear, quadratic, mass, probe_body = self._constants(dev, dtype)
+        _, depth = self.geo.submersion_for(state, ctx)
         wet = self.geo.wet_fraction(depth)                                             # [N]
 
         lin_vel = state.lin_vel
         if self.cfg.relative_to_water and ctx.sea is not None:
-            probe = state.pos + body_to_world(state.quat, self._probe_body.to(dev, dtype).expand(n, 3))
+            probe = state.pos + body_to_world(state.quat, probe_body.expand(n, 3))
             lin_vel = lin_vel - ctx.sea.velocity(probe[:, None, :], ctx.t)[:, 0, :]
         nu = torch.cat([world_to_body(state.quat, lin_vel), world_to_body(state.quat, state.ang_vel)], -1)  # [N, 6]
 
-        k = wet[:, None] * (self.linear.to(dev, dtype) + self.quadratic.to(dev, dtype) * nu.abs())       # [N, 6]
-        tau = -k * nu / (1.0 + k * ctx.dt / self.generalised_mass.to(dev, dtype))
+        k = wet[:, None] * (linear + quadratic * nu.abs())                                             # [N, 6]
+        tau = -k * nu / (1.0 + k * ctx.dt / mass)
         return Wrench(body_to_world(state.quat, tau[:, :3]), body_to_world(state.quat, tau[:, 3:]))

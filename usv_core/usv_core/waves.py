@@ -124,8 +124,10 @@ class SineWaveField(WaveField):
 
     def _phase(self, xy: torch.Tensor, t) -> torch.Tensor:
         w = self.waves
-        t = torch.as_tensor(t, device=xy.device, dtype=xy.dtype)
-        t = t.reshape(-1, 1, 1) if t.dim() == 1 else t                          # [N,1,1] or scalar
+        if torch.is_tensor(t):                                                   # per-env times [N] or a 0-d tensor
+            t = t.to(xy)
+            t = t.reshape(-1, 1, 1) if t.dim() == 1 else t
+        # a plain number stays one: turning it into a GPU tensor would be a CPU->GPU copy (and a wait) per call
         along = xy[..., 0:1] * w.cos_dir[:, None, :] + xy[..., 1:2] * w.sin_dir[:, None, :]  # [N, M, K]
         return w.k[:, None, :] * along - w.omega[:, None, :] * t + w.phase[:, None, :]
 

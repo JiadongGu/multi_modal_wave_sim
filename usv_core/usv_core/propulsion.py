@@ -113,7 +113,10 @@ class TwinThruster(HullModel):
         if ctx.actions is None:
             return Wrench.zeros(n, dev, dtype)
         cmd, steer = self.commands(ctx.actions.to(dev, dtype))                         # [N, 2], [N]
-        screws = self.screws.to(dev, dtype).expand(n, -1, -1)                           # [N, 2, 3] body, from CoM
+        cache = self.__dict__.setdefault("_screw_cache", {})                            # moved to the device once
+        if (dev, dtype) not in cache:
+            cache[(dev, dtype)] = self.screws.to(dev, dtype)
+        screws = cache[(dev, dtype)].expand(n, -1, -1)                                   # [N, 2, 3] body, from CoM
 
         if self.cfg.ventilate and ctx.sea is not None:
             world = state.pos[:, None, :] + body_to_world(state.quat, screws)
