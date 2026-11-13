@@ -33,7 +33,7 @@ from isaaclab.visualizers import VisualizerCfg
 from isaaclab_physx.physics import PhysxCfg
 from isaaclab_physx.sim.schemas import PhysxRigidBodyCfg
 
-from usv_core import ActuatorCfg, DampingCfg, HullCfg, HullGeometry, LidarCfg, SeaCfg, ThrusterCfg
+from usv_core import ActuatorCfg, DampingCfg, HullCfg, HullGeometry, LidarCfg, RomCfg, SeaCfg, ThrusterCfg
 
 DRAFT, FREEBOARD = 0.60, 0.40
 HULL = HullCfg(
@@ -126,6 +126,8 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     # one lidar per boat, 1 m above the deck centre; None switches it off
     lidar: LidarCfg | None = LidarCfg(mount=(0.0, 0.0, DECK_Z + 1.0))
     sea_seed: int = 0
+    # a trained reduced-order model (usv_core/rom.py), or None. mode: add | replace | cost_only
+    rom: RomCfg | None = None
 
     capsize_up_z = 0.2                   # reset when the hull's up axis has z below this (> ~78 degrees of tilt)
     recenter_radius = 10.0               # treadmill: move a boat back to its plot centre beyond this [m]

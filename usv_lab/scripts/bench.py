@@ -27,6 +27,7 @@ ours.add_argument("--warmup", type=int, default=50)
 ours.add_argument("--steps", type=int, default=300, help="policy steps per measured phase")
 ours.add_argument("--out", type=str, default="~/bench/adhoc/results.csv")
 ours.add_argument("--tag", type=str, default="")
+ours.add_argument("--rom", type=str, default="", help="stand-in ROM size, e.g. 3x256 or 3x256x10 (layers x width x history), run cost-only")
 ours.add_argument("--feed", action="store_true", help="live feed on (to measure its cost)")
 ours.add_argument("--feed_sensors", action="store_true", help="feed also shows camera and lidar")
 mine, rest = ours.parse_known_args()
@@ -52,9 +53,9 @@ from isaaclab_tasks.utils import resolve_task_config  # noqa: E402
 
 TASK = "Usv-Float-Direct-v0"
 INSIDE = ["physics", "render", "write_sim", "scene_update", "forces", "lidar", "treadmill", "water", "reset"]
-PARTS = INSIDE + ["other", "total", "read_sensors"]   # other = total - the parts above (Isaac Lab bookkeeping)
+PARTS = INSIDE + ["other", "total", "read_sensors", "rom"]   # rom: part of forces, shown on its own   # other = total - the parts above (Isaac Lab bookkeeping)
 COLUMNS = (
-    ["tag", "time", "status", "num_envs", "sensors", "sea", "water_envs", "cam_res", "live_feed", "warmup", "steps",
+    ["tag", "time", "status", "num_envs", "sensors", "sea", "water_envs", "cam_res", "live_feed", "rom", "warmup", "steps",
      "physics_dt", "decimation", "rendering", "wall_s", "env_steps_per_s", "sim_s_per_real_s_per_boat",
      "sim_s_per_real_s_total", "ms_per_step_clean", "ms_per_step_timed"]
     + [f"{p}_{s}" for p in PARTS for s in ("ms", "p95_ms")]
@@ -140,12 +141,20 @@ if "lidar" not in sensors:
 if args.sea == "flat":
     cfg.sea = None
 cfg.draw_water_envs = args.water
+if args.rom:
+    from usv_core import RomCfg, make_stand_in, parse_size
+
+    depth, width, history = parse_size(args.rom)
+    rom_path = os.path.expanduser(f"~/bench/roms/stand_in_{depth}x{width}x{history}.pt")
+    if not os.path.exists(rom_path):
+        make_stand_in(rom_path, depth, width, history)
+    cfg.rom = RomCfg(path=rom_path, mode="cost_only")
 cfg.live_feed = args.feed or args.feed_sensors
 cfg.live_feed_sensors = args.feed_sensors
 
 row = {"tag": args.tag, "time": datetime.datetime.now().isoformat(timespec="seconds"), "status": "started",
        "num_envs": args.num_envs, "sensors": args.sensors, "sea": args.sea, "water_envs": args.water,
-       "cam_res": args.cam_res if "camera" in sensors else "", "live_feed": "sensors" if args.feed_sensors else ("metrics" if args.feed else ""), "warmup": args.warmup, "steps": args.steps,
+       "cam_res": args.cam_res if "camera" in sensors else "", "live_feed": "sensors" if args.feed_sensors else ("metrics" if args.feed else ""), "rom": args.rom, "warmup": args.warmup, "steps": args.steps,
        "physics_dt": cfg.sim.dt, "decimation": cfg.decimation}
 
 with launch_simulation(cfg, args):

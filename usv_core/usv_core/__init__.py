@@ -23,6 +23,7 @@ from .hull import ColumnBuoyancy, HullCfg, HullGeometry
 from .damping import DampingCfg, HydroDamping
 from .propulsion import ActuatorCfg, Actuators, ThrusterCfg, TwinThruster
 from .lidar import LidarCfg, LidarScan, SeaLidar
+from .rom import RomCfg, RomSpec, TorchModel, make_stand_in, parse_size
 
 __all__ = [
     "ActuatorCfg",
@@ -40,6 +41,11 @@ __all__ = [
     "WaveField",
     "HullCfg",
     "LidarCfg",
+    "RomCfg",
+    "RomSpec",
+    "TorchModel",
+    "make_stand_in",
+    "parse_size",
     "LidarScan",
     "SeaLidar",
     "HullGeometry",

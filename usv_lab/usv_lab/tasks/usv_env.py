@@ -41,6 +41,7 @@ from usv_core import (
     ModelContext,
     SeaLidar,
     SineWaveField,
+    TorchModel,
     TwinThruster,
     world_to_body,
 )
@@ -70,11 +71,18 @@ class UsvEnv(DirectRLEnv):
         self.boat.set_inertias_index(inertias=inertia)
         self.sea = (SineWaveField(cfg.sea, self.num_envs, device=dev, seed=cfg.sea_seed) if cfg.sea is not None
                     else FlatWater(self.num_envs, device=dev))
-        self.model = Composite({
+        models = {
             "buoyancy": ColumnBuoyancy(self.geo),
             "damping": HydroDamping(self.geo, cfg.damping),
             "thrust": TwinThruster(self.geo, cfg.thruster),
-        })
+        }
+        if cfg.rom is not None:
+            rom = TorchModel(cfg.rom.path, self.num_envs, device=dev, mode=cfg.rom.mode)
+            if cfg.rom.mode == "replace":            # the ROM owns the water forces; thrust stays ours
+                del models["buoyancy"], models["damping"]
+            rom.wrench = self.timer.wrap(rom.wrench, "rom")   # its own line in the timing breakdown
+            models["rom"] = rom
+        self.model = Composite(models)
         self.actuators = Actuators(self.num_envs, cfg.actuators, device=dev)
         self.requested = torch.zeros(self.num_envs, 2, device=dev)
         self.lidar = SeaLidar(cfg.lidar, device=dev) if cfg.lidar is not None else None
