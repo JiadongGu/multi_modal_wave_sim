@@ -11,7 +11,8 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 - [x] `HullModel` socket, `ModelContext`, `Composite` (`usv_core/model.py`)
 - [x] `ConventionAdapter` for models in another convention, e.g. Fossen FRD, 6-vector tau (`usv_core/adapters.py`)
 - [x] Applied in Isaac Lab every physics substep, world-frame wrench at the CoM (`usv_lab/tasks/usv_env.py`)
-- [ ] Write the input/output contract for Eric: inputs, frames, units, time step, memory/reset, and which forces
+- [~] Drafted `docs/ROM_INTERFACE.md` + `docs/rom_example.py` (2026-11-13); waiting on Eric's answers.
+      Write the input/output contract for Eric: inputs, frames, units, time step, memory/reset, and which forces
       the ROM owns (buoyancy? waves? propulsion?) so nothing is counted twice. `docs/ROM_INTERFACE.md`.
       **blocked:** answers from Eric and Tim.
 - [x] `TorchModel`: load a saved PyTorch model file as a `HullModel` (batched on the GPU, optional history window)
@@ -35,7 +36,8 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 - [x] IMU on every boat (`ImuCfg`, checked at rest and under thrust)
 - [x] Top camera on every boat, isolated per boat (checked with a negative control)
 - [x] Lidar on every boat against its own sea (`usv_core/lidar.py`)
-- [ ] Waves visible to cameras at training scale: move the water mesh update to the GPU (today: CPU, ~16 boats max)
+- [~] Waves visible to cameras at training scale: GPU water written (`tasks/water_kernel.py`, tested on CPU
+      against fake Fabric meshes); needs a run on the lab (`check_water.py` at 16/256/1,024 boats + cost)
 - [ ] Radar: decide between Isaac Sim's experimental RTX radar and a simple analytic model; implement one
 - [ ] Measure the per-sensor cost (see D)
 

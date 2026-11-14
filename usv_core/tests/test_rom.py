@@ -165,3 +165,20 @@ def test_bad_specs_are_refused():
         RomSpec(inputs=["wave_height"]).check()
     with pytest.raises(ValueError):
         RomSpec(inputs=["heave"], input_mean=[0.0, 1.0]).check()
+
+
+def test_the_example_eric_copies_loads_and_runs(tmp_path):
+    """docs/rom_example.py is what we hand Eric: its files must load and run in our loader as they are."""
+    import importlib.util
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "docs" / "rom_example.py"
+    spec = importlib.util.spec_from_file_location("rom_example", src)
+    example = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(example)
+    example.export(example.MyRom(), tmp_path / "my_rom")
+    rom = TorchModel(tmp_path / "my_rom.pt", 4)
+    assert rom.spec.num_features == 20
+    sea = SineWaveField(SeaCfg(hs=(1.0, 2.0), tp=(6.0, 8.0)), 4, seed=0)
+    w = rom(random_state(4), ModelContext(t=1.0, dt=1 / 120, sea=sea, actions=torch.rand(4, 2)))
+    assert torch.isfinite(w.force).all() and torch.isfinite(w.torque).all()
