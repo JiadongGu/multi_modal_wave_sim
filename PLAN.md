@@ -38,7 +38,10 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 - [x] Lidar on every boat against its own sea (`usv_core/lidar.py`)
 - [~] Waves visible to cameras at training scale: GPU water written (`tasks/water_kernel.py`, tested on CPU
       against fake Fabric meshes); needs a run on the lab (`check_water.py` at 16/256/1,024 boats + cost)
-- [ ] Radar: decide between Isaac Sim's experimental RTX radar and a simple analytic model; implement one
+- [ ] Radar. **blocked:** Tim's answers (see "Questions for Tim"). Leaning: our own analytic marine radar in
+      usv_core (like the lidar): 360 deg PPI image per boat, test targets, optional sea clutter and wave
+      shadowing from our sea. Isaac's RTX radar is experimental, automotive-style, needs Motion BVH, and has
+      no Isaac Lab wrapper (checked 2026-11-13)
 - [ ] Measure the per-sensor cost (see D)
 
 ## D. Scaling benchmark (Tim's main question)
@@ -72,6 +75,12 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
       in the first 4 s, then recovered (smoke.py, Hs 0.5-2 m). Likely zero spawn velocity on a moving surface.
 - [ ] `usv_core`/`usv_lab` section in `docs/METHODS.md`
 - [ ] Pull request: `usv-core` → `main`, after review
+
+## Questions for Tim
+
+1. Radar: a spinning marine navigation radar (km range, PPI image) or a short-range radar (tens of m,
+   point detections)? What should it detect (vessels, buoys, shoreline)? Is our own analytic model fine,
+   or does he want Isaac Sim's RTX radar specifically?
 
 ## Removed (2026-11-11), to keep the code lean
 
