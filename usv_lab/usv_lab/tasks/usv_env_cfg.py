@@ -145,6 +145,7 @@ class UsvFloatEnvCfg(DirectRLEnvCfg):
     draw_water_envs = 0
     water_patch_size = 80.0              # [m], centred on the boat
     water_resolution = 96                # vertices per side
+    water_gpu = True                     # write the meshes on the GPU (water_kernel.py); False: through the CPU
 
     def __post_init__(self):
         # Overhead view of the grid (16 envs at 100 m spacing span about 300 m).

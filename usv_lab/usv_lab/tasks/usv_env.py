@@ -116,7 +116,8 @@ class UsvEnv(DirectRLEnv):
 
             n = self.scene.num_envs
             self.water = WaterPatches(list(range(min(self.cfg.draw_water_envs, n))), self.cfg.water_patch_size,
-                                      self.cfg.water_resolution, self.cfg.recenter_radius, self.scene.env_origins.device)
+                                      self.cfg.water_resolution, self.cfg.recenter_radius, self.scene.env_origins.device,
+                                      gpu=self.cfg.water_gpu)
 
     # ------------------------------------------------------------------ physics
 

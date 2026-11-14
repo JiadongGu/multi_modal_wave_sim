@@ -28,8 +28,12 @@ at twice its origin. The mesh has no transform of its own, so only the point and
 normal arrays ever change. The USD extent is authored large enough to cover
 everywhere the patch can move, so the renderer never culls it.
 
-Vertices go through the CPU each update: fine for the environments someone
-watches, far too slow for thousands. Draw only the environments being viewed.
+Two ways to write (gpu=True is the default):
+  GPU  one Warp kernel computes every vertex of every mesh and writes it into Fabric on the GPU
+       (water_kernel.py); no CPU copy, one launch for all boats. Each mesh carries an int attribute
+       `mmws:waterEnv` naming its environment, because Fabric hands meshes over in its own order.
+  CPU  heights computed on the GPU, copied to the CPU, written mesh by mesh: fine for the few boats
+       someone watches, far too slow for thousands. Kept as a fallback.
 """
 
 from __future__ import annotations
@@ -37,19 +41,21 @@ from __future__ import annotations
 import numpy as np
 import torch
 import usdrt
-from pxr import Gf, UsdGeom, Vt
+from pxr import Gf, Sdf, UsdGeom, Vt
 
 import isaaclab.sim as sim_utils
 
-from usv_core import SineWaveField
+from usv_core import SineWaveField, WaveComponents
 
 
 class WaterPatches:
     def __init__(self, env_ids: list[int], size: float, resolution: int,
-                 reach: float, device, color=(0.02, 0.12, 0.22)):
+                 reach: float, device, color=(0.02, 0.12, 0.22), gpu: bool = True):
         """reach: how far [m] the patch centre can move from the env origin (the treadmill radius)."""
         self.env_ids = list(env_ids)
         self.device = device
+        self.gpu = gpu and torch.device(device).type == "cuda"
+        self._flat = None
         n = resolution
         lin = torch.linspace(-size / 2, size / 2, n, device=device)
         gx, gy = torch.meshgrid(lin, lin, indexing="xy")
@@ -59,23 +65,31 @@ class WaterPatches:
         quads = np.stack([idx[:-1, :-1], idx[:-1, 1:], idx[1:, 1:], idx[1:, :-1]], -1).reshape(-1)
         stage = sim_utils.get_current_stage()
         half = size / 2 + reach
+        # built once and shared by every mesh: per-mesh conversion is what made creating thousands slow
+        counts = Vt.IntArray([4] * ((n - 1) * (n - 1)))
+        indices = Vt.IntArray.FromNumpy(quads.astype(np.int32))
+        flat = np.zeros((n * n, 3), np.float32)
+        flat[:, :2] = self.grid.cpu().numpy()
+        flat_points = Vt.Vec3fArray.FromNumpy(flat)
+        up = np.zeros_like(flat)
+        up[:, 2] = 1.0
+        up_normals = Vt.Vec3fArray.FromNumpy(up)
+        colour = Vt.Vec3fArray([Gf.Vec3f(*color)])
+        extent = Vt.Vec3fArray([Gf.Vec3f(-half, -half, -20.0), Gf.Vec3f(half, half, 20.0)])
         paths = []
         for i in self.env_ids:
             path = f"/World/envs/env_{i}/Water"
             mesh = UsdGeom.Mesh.Define(stage, path)
-            mesh.CreateFaceVertexCountsAttr(Vt.IntArray([4] * ((n - 1) * (n - 1))))
-            mesh.CreateFaceVertexIndicesAttr(Vt.IntArray(quads.tolist()))
+            mesh.CreateFaceVertexCountsAttr(counts)
+            mesh.CreateFaceVertexIndicesAttr(indices)
             mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
             mesh.CreateDoubleSidedAttr(True)
-            mesh.CreateDisplayColorAttr(Vt.Vec3fArray([Gf.Vec3f(*color)]))
-            flat = np.zeros((n * n, 3), np.float32)
-            flat[:, :2] = self.grid.cpu().numpy()
-            mesh.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(flat))
-            up = np.zeros_like(flat)
-            up[:, 2] = 1.0
-            mesh.CreateNormalsAttr(Vt.Vec3fArray.FromNumpy(up))
+            mesh.CreateDisplayColorAttr(colour)
+            mesh.CreatePointsAttr(flat_points)
+            mesh.CreateNormalsAttr(up_normals)
             mesh.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
-            mesh.CreateExtentAttr(Vt.Vec3fArray([Gf.Vec3f(-half, -half, -20.0), Gf.Vec3f(half, half, 20.0)]))
+            mesh.CreateExtentAttr(extent)
+            mesh.GetPrim().CreateAttribute("mmws:waterEnv", Sdf.ValueTypeNames.Int).Set(int(i))   # for the GPU path
             paths.append(path)
         self._paths = paths
         self._rt_points = self._rt_normals = None
@@ -90,8 +104,21 @@ class WaterPatches:
         self._rt_points = [prim.GetAttribute("points") for prim in prims]
         self._rt_normals = [prim.GetAttribute("normals") for prim in prims]
 
-    def update(self, sea: SineWaveField, t: float, plot_xy: torch.Tensor, sea_offset: torch.Tensor):
+    def update(self, sea, t: float, plot_xy: torch.Tensor, sea_offset: torch.Tensor):
         """Redraw. plot_xy/sea_offset are the full [N, ...] tensors; only drawn envs are used."""
+        if not hasattr(sea, "waves"):                    # flat water: one zero-height wave per env
+            if self._flat is None:
+                z = torch.zeros(plot_xy.shape[0], 1, device=plot_xy.device)
+                self._flat = SineWaveField.from_components(WaveComponents(
+                    amp=z, omega=z, k=z, direction=z, cos_dir=z + 1.0, sin_dir=z, phase=z,
+                    hs=z[:, 0], tp=z[:, 0], heading=z[:, 0], spread_s=z[:, 0]))
+            sea = self._flat
+        if self.gpu:
+            try:
+                return self._update_gpu(sea, t, plot_xy, sea_offset)
+            except Exception as err:                     # never stop a run over drawing; say so once, use the CPU
+                print(f"[water] GPU drawing failed, falling back to the CPU path: {type(err).__name__}: {err}", flush=True)
+                self.gpu = False
         if self._rt_points is None:
             self.bind_fabric()
         ids = torch.tensor(self.env_ids, device=self.device)
@@ -108,3 +135,26 @@ class WaterPatches:
         for k in range(len(self.env_ids)):
             self._rt_points[k].Set(usdrt.Vt.Vec3fArray(points[k]))
             self._rt_normals[k].Set(usdrt.Vt.Vec3fArray(normals[k]))
+
+    def _update_gpu(self, sea, t: float, plot_xy: torch.Tensor, sea_offset: torch.Tensor) -> None:
+        import warp as wp
+
+        from .water_kernel import write_water
+
+        stage = sim_utils.get_current_stage(fabric=True)
+        # every water mesh at once, on the GPU; selected each frame since Fabric may move its storage
+        self._selection = stage.SelectPrims(               # kept: the kernel follows pointers it owns
+            require_attrs=[
+                (usdrt.Sdf.ValueTypeNames.Point3fArray, "points", usdrt.Usd.Access.ReadWrite),
+                (usdrt.Sdf.ValueTypeNames.Normal3fArray, "normals", usdrt.Usd.Access.ReadWrite),
+                (usdrt.Sdf.ValueTypeNames.Int, "mmws:waterEnv", usdrt.Usd.Access.Read),
+            ],
+            device=str(self.device),
+        )
+        points = wp.fabricarrayarray(data=self._selection, attrib="points", dtype=wp.vec3)
+        normals = wp.fabricarrayarray(data=self._selection, attrib="normals", dtype=wp.vec3)
+        env_of = wp.fabricarray(data=self._selection, attrib="mmws:waterEnv", dtype=wp.int32)
+        if env_of.size != len(self.env_ids):
+            raise RuntimeError(f"Fabric returned {env_of.size} water meshes, expected {len(self.env_ids)}")
+        write_water(points, normals, env_of, self.grid.shape[0], self.grid, sea.waves,
+                    plot_xy, sea_offset[:, :2], t)

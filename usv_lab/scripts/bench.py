@@ -21,7 +21,8 @@ ours = argparse.ArgumentParser(add_help=False)
 ours.add_argument("--num_envs", type=int, default=16)
 ours.add_argument("--sensors", choices=list(SENSOR_SETS), default="none")
 ours.add_argument("--sea", choices=["waves", "flat"], default="waves", help="flat: no wave maths at all (plain Fossen)")
-ours.add_argument("--water", type=int, default=0, help="boats with a drawn water mesh (CPU-bound today)")
+ours.add_argument("--water", type=int, default=0, help="boats with a drawn water mesh; -1 = every boat")
+ours.add_argument("--water_cpu", action="store_true", help="draw water through the CPU (the old path)")
 ours.add_argument("--cam_res", type=str, default="128x96", help="camera width x height")
 ours.add_argument("--warmup", type=int, default=50)
 ours.add_argument("--steps", type=int, default=300, help="policy steps per measured phase")
@@ -55,7 +56,7 @@ TASK = "Usv-Float-Direct-v0"
 INSIDE = ["physics", "render", "write_sim", "scene_update", "forces", "lidar", "treadmill", "water", "reset"]
 PARTS = INSIDE + ["other", "total", "read_sensors", "rom"]   # rom: part of forces, shown on its own   # other = total - the parts above (Isaac Lab bookkeeping)
 COLUMNS = (
-    ["tag", "time", "status", "num_envs", "sensors", "sea", "water_envs", "cam_res", "live_feed", "rom", "warmup", "steps",
+    ["tag", "time", "status", "num_envs", "sensors", "sea", "water_envs", "water_gpu", "cam_res", "live_feed", "rom", "warmup", "steps",
      "physics_dt", "decimation", "rendering", "wall_s", "env_steps_per_s", "sim_s_per_real_s_per_boat",
      "sim_s_per_real_s_total", "ms_per_step_clean", "ms_per_step_timed"]
     + [f"{p}_{s}" for p in PARTS for s in ("ms", "p95_ms")]
@@ -140,7 +141,8 @@ if "lidar" not in sensors:
     cfg.lidar = None
 if args.sea == "flat":
     cfg.sea = None
-cfg.draw_water_envs = args.water
+cfg.draw_water_envs = args.num_envs if args.water < 0 else args.water
+cfg.water_gpu = not args.water_cpu
 if args.rom:
     from usv_core import RomCfg, make_stand_in, parse_size
 
@@ -153,7 +155,7 @@ cfg.live_feed = args.feed or args.feed_sensors
 cfg.live_feed_sensors = args.feed_sensors
 
 row = {"tag": args.tag, "time": datetime.datetime.now().isoformat(timespec="seconds"), "status": "started",
-       "num_envs": args.num_envs, "sensors": args.sensors, "sea": args.sea, "water_envs": args.water,
+       "num_envs": args.num_envs, "sensors": args.sensors, "sea": args.sea, "water_envs": args.num_envs if args.water < 0 else args.water, "water_gpu": not args.water_cpu,
        "cam_res": args.cam_res if "camera" in sensors else "", "live_feed": "sensors" if args.feed_sensors else ("metrics" if args.feed else ""), "rom": args.rom, "warmup": args.warmup, "steps": args.steps,
        "physics_dt": cfg.sim.dt, "decimation": cfg.decimation}
 
