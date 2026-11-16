@@ -146,7 +146,8 @@ class WaterPatches:
         self._selection = stage.SelectPrims(               # kept: the kernel follows pointers it owns
             require_attrs=[
                 (usdrt.Sdf.ValueTypeNames.Point3fArray, "points", usdrt.Usd.Access.ReadWrite),
-                (usdrt.Sdf.ValueTypeNames.Normal3fArray, "normals", usdrt.Usd.Access.ReadWrite),
+                # Fabric stores normals as plain float3[] (no "normal" role); asking for Normal3fArray matches nothing
+                (usdrt.Sdf.ValueTypeNames.Float3Array, "normals", usdrt.Usd.Access.ReadWrite),
                 (usdrt.Sdf.ValueTypeNames.Int, "mmws:waterEnv", usdrt.Usd.Access.Read),
             ],
             device=str(self.device),
