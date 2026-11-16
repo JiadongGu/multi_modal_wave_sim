@@ -36,8 +36,11 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 - [x] IMU on every boat (`ImuCfg`, checked at rest and under thrust)
 - [x] Top camera on every boat, isolated per boat (checked with a negative control)
 - [x] Lidar on every boat against its own sea (`usv_core/lidar.py`)
-- [~] Waves visible to cameras at training scale: GPU water written (`tasks/water_kernel.py`, tested on CPU
-      against fake Fabric meshes); needs a run on the lab (`check_water.py` at 16/256/1,024 boats + cost)
+- [x] Waves visible to cameras at training scale: GPU water (`tasks/water_kernel.py`), run on the lab 2026-11-16.
+      Correct at 16/256/1,024 boats (mean 1 mm). Drawing all 1,024 seas: 1.8 ms; rendering them costs ~55 ms more per
+      step (1,024 boats, camera: 10.8k -> 6.7k env-steps/s, 13.8 GB). `bench/results/gpuwater/`
+- [ ] Water patch edge: 80 m patch; a boat pitched up in Hs 1.5-2 m sees past its edge (~0.3% of cameras).
+      Add a coarse outer ring out to the horizon, or a bigger patch (costs rendering)
 - [ ] Radar. **blocked:** Tim's answers (see "Questions for Tim"). Leaning: our own analytic marine radar in
       usv_core (like the lidar): 360 deg PPI image per boat, test targets, optional sea clutter and wave
       shadowing from our sea. Isaac's RTX radar is experimental, automotive-style, needs Motion BVH, and has
