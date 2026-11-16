@@ -54,7 +54,10 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
       × camera resolution; headless, held random commands, warm-up excluded, GPU synchronised. Cost-knob size: to do
 - [x] Record per run: env-steps/s, simulated s per real s, ms per step by component, peak GPU memory,
       reset count, GPU/driver/Isaac versions; flag black or corrupted camera images at scale
-- [ ] Find each configuration's ceiling (out of memory, or no further gain)
+- [x] Full sweep 128 -> 4,096 boats (2026-11-16, `bench/results/full/`; camera runs draw water on every boat).
+- [x] Find each configuration's ceiling (out of memory, or no further gain). RTX 4090 24 GB, 128x96 camera:
+      no sensors / IMU: past 4,096 (2.6 GB); lidar: 4,096 ok but throughput flat at ~11k env-steps/s on waves;
+      camera + water: 2,048 (21 GB), 4,096 fails; all sensors: 2,048 on waves (22.9 GB), flat 2,048 OOM (borderline)
 - [ ] Results table and plots for Tim (CSV plus a page or doc)
 - [x] Live viewer (`tasks/live_feed.py` + `scripts/live_view.py`). Cost at 1,024 boats, all sensors:
       metrics +0.4%, with camera and lidar +0.6% (identical runs differ by 0.1%). `bench/results/feed/`
