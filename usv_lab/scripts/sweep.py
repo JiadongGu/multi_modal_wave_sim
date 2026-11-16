@@ -23,6 +23,7 @@ p.add_argument("--sensors", nargs="+", default=["none", "imu", "camera", "lidar"
 p.add_argument("--seas", nargs="+", default=["waves", "flat"])
 p.add_argument("--cam_res", nargs="+", default=["128x96"], help="camera runs repeat at each resolution")
 p.add_argument("--steps", type=int, default=300)
+p.add_argument("--water", type=int, default=-1, help="camera runs: boats with a drawn sea (-1 = every boat, 0 = none)")
 p.add_argument("--timeout", type=int, default=1200, help="seconds per run")
 p.add_argument("--isaaclab", default="~/IsaacLab")
 args = p.parse_args()
@@ -61,6 +62,7 @@ for i, (sensors, sea, res, n) in enumerate(plan, 1):
     before = len(rows_in(results))
     cmd = [os.path.join(os.path.expanduser(args.isaaclab), "isaaclab.sh"), "-p", bench, "--num_envs", str(n),
            "--sensors", sensors, "--sea", sea, "--cam_res", res or "128x96", "--steps", str(args.steps),
+           "--water", str(args.water if res else 0),
            "--out", results, "--tag", args.name]
     t0 = time.time()
     for attempt in (1, 2):                              # a crash with no result row gets one retry
