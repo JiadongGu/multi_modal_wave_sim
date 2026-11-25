@@ -82,11 +82,18 @@ Legend: `[x]` done · `[ ]` to do · **blocked:** needs someone else first.
 - [ ] `usv_core`/`usv_lab` section in `docs/METHODS.md`
 - [ ] Pull request: `usv-core` → `main`, after review
 
+## G. Task harness (refuelling alongside, obstacles + traffic, docking)
+
+- [ ] Plan drafted: `docs/HARNESS_PLAN.md` (2026-11-25). Decisions D1-D5 first, then phases P0-P5.
+
 ## Questions for Tim
 
 1. Radar: a spinning marine navigation radar (km range, PPI image) or a short-range radar (tens of m,
    point detections)? What should it detect (vessels, buoys, shoreline)? Is our own analytic model fine,
    or does he want Isaac Sim's RTX radar specifically?
+2. Harness (docs/HARNESS_PLAN.md): Isaac Lab manager-based configs as the standard? Which ego hull for the
+   reference tasks (Wigley / BlueBoat / GPPH)? Reuse, co-develop with, or stay separate from USVBench
+   (github.com/whymy421/usvbench; who owns it)?
 
 ## Removed (2026-11-11), to keep the code lean
 
